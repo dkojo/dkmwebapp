@@ -11,7 +11,7 @@ variable "vpc_id" {
 variable "subnet_ids" {
   description = "The list of subnet IDs to associate with resources"
   type        = list(string)
-  default     = ["subnet-0305d0946c139cda7", "subnet-0413b34ddd5fbc136", "subnet-085dd956e5b639f40", "subnet-029b9641533fc3b1e"]
+  default     = ["subnet-0305d0946c139cda7", "subnet-085dd956e5b639f40"]
 }
 
 variable "instance_ami" {
@@ -21,7 +21,7 @@ variable "instance_ami" {
 
 variable "instance_key_name" {
   description = "An Existing Keypair to be used for the instances"
-  default     = "lappy-jenkins"
+  default     = "itgkey"
 }
 
 variable "instance_subnet_id" {
@@ -45,12 +45,12 @@ variable "db_name" {
 
 variable "db_username" {
   description = "Master username for the database"
-  default     = "itgeniusmaster"
+  default     = "root"
 }
 
 variable "db_password" {
   description = "Master password for the database"
-  default     = "itgenius1234"
+  default     = "Robystunna123"
 }
 
 variable "db_instance_class" {
@@ -65,10 +65,10 @@ variable "db_engine_version" {
 
 variable "s3_bucket_name" {
   description = "The name of the S3 bucket for Terraform state"
-  default     = "itgenius-springboot-app-s3-bucket"
+  default     = "itgenius-s3-bucket"
 }
 
 variable "dynamodb_table_name" {
   description = "The name of the DynamoDB table for Terraform state locking"
-  default     = "itgenius-springboot-app-dynamoDB"
+  default     = "itgenius-dynamoDB"
 }
