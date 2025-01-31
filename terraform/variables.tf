@@ -45,12 +45,12 @@ variable "db_name" {
 
 variable "db_username" {
   description = "Master username for the database"
-  default     = "root"
+  default     = "itgeniusmaster"
 }
 
 variable "db_password" {
   description = "Master password for the database"
-  default     = "Robystunna123"
+  default     = "itgenius1234"
 }
 
 variable "db_instance_class" {
