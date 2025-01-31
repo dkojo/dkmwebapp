@@ -4,14 +4,12 @@ pipeline {
         timeout(time: 15, unit: 'MINUTES')
     }
     parameters {
-        string(name: 'GITHUB_CREDENTIAL', defaultValue: 'github_creds', description: 'Github access credentials id')
-        string(name: 'GITHUB_REPO_URL', defaultValue: 'https://github.com/dkojo/itgenius-springbootapp-cicd.git', description: 'Github repository URL')
-        string(name: 'GITHUB_BRANCH', defaultValue: 'main', description: 'Github branch for your build')
+        string(name: 'GITHUB_CREDENTIAL', defaultValue: 'github_creds', description: 'GitHub access credentials ID')
+        string(name: 'GITHUB_REPO_URL', defaultValue: 'https://github.com/dkojo/itgenius-springbootapp-cicd.git', description: 'GitHub repository URL')
+        string(name: 'GITHUB_BRANCH', defaultValue: 'main', description: 'GitHub branch for your build')
         string(name: 'SONARQUBE_SERVER_NAME', defaultValue: 'sonarqube_server', description: 'Name for your SonarQube server')
-        //string(name: 'NEXUS_URL', defaultValue: 'ec2-44-220-136-131.compute-1.amazonaws.com:8081', description: 'Your Nexus URL')
-        //string(name: 'NEXUS_CREDENTIAL', defaultValue: 'nexus_creds', description: 'Your Nexus credentials')
         string(name: 'REMOTE_USER', defaultValue: 'ec2-user', description: 'Remote server username')
-        string(name: 'MONOLITHIC_SERVER', defaultValue: 'monolithic_server', description: 'The monolithic server Jenkins will SSH into using Publish Over SSH.')
+        string(name: 'MONOLITHIC_SERVER', defaultValue: 'monolithic_server', description: 'Monolithic server Jenkins will SSH into')
     }
 
     environment {
@@ -20,8 +18,6 @@ pipeline {
         GITHUB_REPO_URL = "${params.GITHUB_REPO_URL}"
         GITHUB_BRANCH = "${params.GITHUB_BRANCH}"
         SONARQUBE_SERVER_NAME = "${params.SONARQUBE_SERVER_NAME}"
-       // NEXUS_URL = "${params.NEXUS_URL}"
-       // NEXUS_CREDENTIAL = "${params.NEXUS_CREDENTIAL}"
         MONOLITHIC_SERVER = "${params.MONOLITHIC_SERVER}"
     }
 
@@ -29,8 +25,8 @@ pipeline {
         stage("Validate Parameters") {
             steps {
                 script {
-                    def requiredParameters = ['REMOTE_USER', 'GITHUB_CREDENTIAL', 'GITHUB_REPO_URL', 'GITHUB_BRANCH']
-                    for (param in requiredParameters) {
+                    def requiredParameters = ['REMOTE_USER', 'GITHUB_CREDENTIAL', 'GITHUB_REPO_URL', 'GITHUB_BRANCH', 'MONOLITHIC_SERVER']
+                    requiredParameters.each { param ->
                         if (!params.containsKey(param) || params[param].trim() == "") {
                             error("Parameter '$param' is missing or empty. Please provide a value.")
                         }
@@ -39,20 +35,16 @@ pipeline {
             }
         }
 
-        stage('Checkout Code From GitHub') {
+        stage("Checkout Code From GitHub") {
             steps {
-                script {
-                    checkout([$class: 'GitSCM',
-                        branches: [[name: "${GITHUB_BRANCH}"]],
-                        userRemoteConfigs: [[url: "${GITHUB_REPO_URL}", credentialsId: "${GITHUB_CREDENTIAL}"]]
-                    ])
-                }
+                checkout([$class: 'GitSCM',
+                    branches: [[name: "${GITHUB_BRANCH}"]],
+                    userRemoteConfigs: [[url: "${GITHUB_REPO_URL}", credentialsId: "${GITHUB_CREDENTIAL}"]]
+                ])
             }
         }
-    }
-}
 
-        stage('Application Build And Test') {
+        stage('Application Build and Test') {
             steps {
                 sh 'chmod +x ./mvnw'
                 sh './mvnw clean install'
@@ -60,7 +52,7 @@ pipeline {
             }
         }
 
-        /*stage('SonarQube Analysis') {
+       /* stage('SonarQube Analysis') {
             steps {
                 script {
                     withSonarQubeEnv("${SONARQUBE_SERVER_NAME}") {
@@ -69,30 +61,6 @@ pipeline {
                 }
             }
         }*/
-
-        /*stage('Upload Snapshot to Nexus Repository') {
-            steps {
-                script {
-                    def artifactPath = "target/itgenuine-0.0.1-SNAPSHOT.jar"
-                    nexusArtifactUploader(
-                        nexusVersion: 'nexus3',
-                        protocol: 'http',
-                        nexusUrl: "${NEXUS_URL}",
-                        groupId: 'com.app',
-                        version: '0.0.1-SNAPSHOT',
-                        repository: 'maven-snapshots',
-                        credentialsId: "${NEXUS_CREDENTIAL}",
-                        artifacts: [[
-                            artifactId: 'itgenuine',
-                            classifier: '',
-                            file: artifactPath,
-                            type: 'jar',
-                            filename: "itgenuine-0.0.1-SNAPSHOT.jar"
-                        ]]
-                    )
-                }
-            }
-        } */
 
         stage('Deploy To Monolithic Server') {
             steps {
@@ -108,7 +76,7 @@ pipeline {
                             exit 1
                         fi
                         echo "Application started successfully."
-                        sleep 7
+                        sleep 5
                         cat logfile
                     '''
 
@@ -121,11 +89,10 @@ pipeline {
                                 makeEmptyDirs: false,
                                 remoteDirectory: '/itgenius-app/',
                                 execTimeout: 120000
-                                
                             ),
                             sshTransfer(
                                 sourceFiles: 'monolithic-cicd/.env',
-                                removePrefix: 'monolithic-cicd/', // No prefix to remove for .env file
+                                removePrefix: 'monolithic-cicd/',
                                 makeEmptyDirs: false,
                                 remoteDirectory: '/itgenius-app/',
                                 execCommand: deployCommand,
@@ -139,7 +106,5 @@ pipeline {
                 }
             }
         }
-
-        
     }
 }
