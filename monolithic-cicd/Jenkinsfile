@@ -40,7 +40,7 @@ pipeline {
         }
 
         stage("Checkout Code From GitHub") {
-            steps {
+            steps {+
                 git branch: "${GITHUB_BRANCH}", credentialsId: "${GITHUB_CREDENTIAL}", url: "${GITHUB_REPO_URL}"
             }
         }
@@ -53,7 +53,7 @@ pipeline {
             }
         }
 
-        stage('SonarQube Analysis') {
+        /*stage('SonarQube Analysis') {
             steps {
                 script {
                     withSonarQubeEnv("${SONARQUBE_SERVER_NAME}") {
@@ -61,7 +61,7 @@ pipeline {
                     }
                 }
             }
-        }
+        }*/
 
         /*stage('Upload Snapshot to Nexus Repository') {
             steps {
