@@ -11,7 +11,7 @@ variable "vpc_id" {
 variable "subnet_ids" {
   description = "The list of subnet IDs to associate with resources"
   type        = list(string)
-  default     = ["subnet-0305d0946c139cda7", "subnet-085dd956e5b639f40"]
+  default     = ["subnet-0305d0946c139cda7", "subnet-085dd956e5b639f40", "subnet-0413b34ddd5fbc136", "subnet-029b9641533fc3b1e"]
 }
 
 variable "instance_ami" {
