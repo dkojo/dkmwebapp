@@ -39,11 +39,18 @@ pipeline {
             }
         }
 
-        stage("Checkout Code From GitHub") {
-            steps {+
-                git branch: "${GITHUB_BRANCH}", credentialsId: "${GITHUB_CREDENTIAL}", url: "${GITHUB_REPO_URL}"
+        stage('Checkout Code From GitHub') {
+            steps {
+                script {
+                    checkout([$class: 'GitSCM',
+                        branches: [[name: "${GITHUB_BRANCH}"]],
+                        userRemoteConfigs: [[url: "${GITHUB_REPO_URL}", credentialsId: "${GITHUB_CREDENTIAL}"]]
+                    ])
+                }
             }
         }
+    }
+}
 
         stage('Application Build And Test') {
             steps {
