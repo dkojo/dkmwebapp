@@ -22,8 +22,8 @@ resource "aws_db_instance" "itgenius_instance" {
   instance_class       = var.db_instance_class
   identifier           = "itgeniusdb"
   db_name                 = var.db_name
-  username             = local.db_credentials["DB_USERNAME"]
-  password             = local.db_credentials["DB_PASSWORD"]
+  username             = local.db_credentials["db_username"]
+  password             = local.db_credentials["db_password"]
   publicly_accessible  = true
   vpc_security_group_ids = [aws_security_group.itgenius_sg.id]
   db_subnet_group_name = aws_db_subnet_group.itgenius_subnet_group.name
