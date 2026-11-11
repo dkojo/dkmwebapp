@@ -79,7 +79,7 @@ variable "github_oidc_subject_prefix" {
 ### `terraform.tfvars`
 
 ```hcl
-github_oidc_subject_prefix = "repo:dkojo/dkmwebapp"
+github_oidc_subject_prefix = "repo:dkojo@167027053/dkmwebapp@893369381"   # immutable form, from Phase 0.5
 ```
 
 ### `ecr.tf`
@@ -286,7 +286,7 @@ aws acm list-certificates --query "CertificateSummaryList[?DomainName=='app.dani
 
 aws iam get-role --role-name eks-dkm-ci \
   --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals."token.actions.githubusercontent.com:sub"' --output text
-# repo:dkojo/dkmwebapp:ref:refs/heads/remodelled
+# repo:dkojo@167027053/dkmwebapp@893369381:ref:refs/heads/remodelled
 
 terraform -chdir=infra/foundation plan    # No changes.
 ```
