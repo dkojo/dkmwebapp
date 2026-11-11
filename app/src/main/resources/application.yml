@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: dkmwebapp
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:dkm}?useSSL=true&requireSSL=false
+    username: ${DB_USERNAME:dkm}
+    password: ${DB_PASSWORD:dkm}
+  jpa:
+    hibernate:
+      ddl-auto: validate          # Flyway owns the schema
+    open-in-view: false
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+server:
+  shutdown: graceful              # finish in-flight requests when Kubernetes stops a pod
+
+app:
+  version: ${APP_VERSION:dev}
+  fault:
+    error-rate: ${FAULT_ERROR_RATE:0}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true             # /actuator/health/liveness and /readiness for Kubernetes
+  metrics:
+    tags:
+      application: dkmwebapp
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true   # latency histograms for p95 in Grafana and canary analysis
