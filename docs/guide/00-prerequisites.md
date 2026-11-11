@@ -208,6 +208,6 @@ These names are used throughout. Changing them later means editing many files.
 - [ ] SonarQube Cloud organization exists and you know its key
 - [ ] Slack workspace with `#deployments`
 - [ ] `github.com/dkojo/dkmwebapp/tree/remodelled` shows `legacy-2024/` and `docs/guide/`
-- [ ] You've written down the OIDC `sub_claim_prefix` (`repo:dkojo/dkmwebapp`)
+- [ ] You've written down the OIDC `sub_claim_prefix` (`repo:dkojo@167027053/dkmwebapp@893369381`)
 
 **Next:** [Phase 1: Repository and sample app](01-repo-and-app.md)
