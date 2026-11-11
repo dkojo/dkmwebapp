@@ -239,13 +239,13 @@ jobs:
           # Pushes made with GITHUB_TOKEN don't start new workflow runs, so this can't loop
 
       - name: Notify Slack
-        if: always() && github.event_name != 'pull_request'
+        if: always()                          # every run, push or PR, pass or fail
         uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: |
-            text: "${{ job.status == 'success' && '✅' || '❌' }} dkmwebapp CI ${{ job.status }} on ${{ github.sha }} · ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            text: "${{ job.status == 'success' && '✅' || job.status == 'cancelled' && '⚪' || '❌' }} dkmwebapp CI *${{ job.status }}* · ${{ github.event_name == 'pull_request' && format('PR #{0}', github.event.number) || format('push to {0}', github.ref_name) }} by ${{ github.actor }} · ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 ```
 
 ### What the image's account ID exposure means
