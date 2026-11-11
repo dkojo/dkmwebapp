@@ -172,12 +172,13 @@ numbered (immutable) form, which is why its first deploy failed. Check which for
 
 ```bash
 gh api repos/dkojo/dkmwebapp/actions/oidc/customization/sub
-# {"use_default":true,"use_immutable_subject":false,"sub_claim_prefix":"repo:dkojo/dkmwebapp"}
+# {"use_default":true,"use_immutable_subject":true,"sub_claim_prefix":"repo:dkojo@167027053/dkmwebapp@893369381"}
 ```
 
-Write down the `sub_claim_prefix` value. With `"use_immutable_subject": false` it's simply
-`repo:dkojo/dkmwebapp`. (Before the rename it read `repo:dkojo/itgenius-springbootapp-cicd`, so run this
-**after** 0.4.)
+Write down the `sub_claim_prefix` value. This repo has `"use_immutable_subject": true`, like the portfolio
+repo, so the prefix carries the owner and repo IDs: `repo:dkojo@167027053/dkmwebapp@893369381`. Phase 2 puts
+it in `infra/foundation/terraform.tfvars`. The name part changes if the repo is renamed, so run this
+**after** 0.4. (A repo with `"use_immutable_subject": false` would show plain `repo:dkojo/dkmwebapp`.)
 
 ---
 
