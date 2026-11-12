@@ -7,6 +7,7 @@
 # Each stack keeps per-environment files in infra/<stack>/envs/:
 #   <env>.tfvars        variable values (region, names, sizes...)
 #   <env>.backend.hcl   where that environment's state lives
+#   <env>.local.tfvars  optional, git-ignored: values that must stay out of a public repo (your IP)
 set -euo pipefail
 
 usage="usage: [ENV=<env>] scripts/tf.sh <foundation|platform> <command> [args...]"
@@ -21,6 +22,9 @@ done
 
 tf() { terraform -chdir="$dir" "$@"; }
 
+varfiles=(-var-file="envs/$env.tfvars")
+[ -f "$dir/envs/$env.local.tfvars" ] && varfiles+=(-var-file="envs/$env.local.tfvars")
+
 # -reconfigure only switches which state file this folder points at; it never moves or copies state.
 init() { tf init -input=false -reconfigure -backend-config="envs/$env.backend.hcl" "$@"; }
 
@@ -32,9 +36,9 @@ init >/dev/null
 case "$cmd" in
   apply)
     # A saved plan already contains its variables; Terraform refuses -var-file with one.
-    if [ $# -gt 0 ] && [[ "${!#}" == *.tfplan ]]; then tf apply "$@"; else tf apply -var-file="envs/$env.tfvars" "$@"; fi ;;
+    if [ $# -gt 0 ] && [[ "${!#}" == *.tfplan ]]; then tf apply "$@"; else tf apply "${varfiles[@]}" "$@"; fi ;;
   plan|destroy|import|refresh|console)
-    tf "$cmd" -var-file="envs/$env.tfvars" "$@" ;;
+    tf "$cmd" "${varfiles[@]}" "$@" ;;
   *)
     tf "$cmd" "$@" ;;   # output, state, fmt, validate, show...
 esac
