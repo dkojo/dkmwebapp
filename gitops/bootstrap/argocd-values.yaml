@@ -1,0 +1,15 @@
+global:
+  nodeSelector:
+    karpenter.sh/controller: "true"     # keep Argo CD on the fixed system nodes
+
+configs:
+  params:
+    server.insecure: true               # you reach the UI through kubectl port-forward, not the internet
+  cm:
+    timeout.reconciliation: 60s         # check Git every minute
+
+dex:
+  enabled: false                        # no SSO needed for a personal cluster
+
+notifications:
+  enabled: true                         # Slack notifications are configured in Phase 6

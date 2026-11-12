@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  source:
+    repoURL: public.ecr.aws/karpenter
+    chart: karpenter
+    targetRevision: 1.15.1
+    helm:
+      valuesObject:
+        settings:
+          clusterName: dkm
+          interruptionQueue: Karpenter-dkm   # check: scripts/tf.sh platform output karpenter_queue_name
+        serviceAccount:
+          name: karpenter
+        replicas: 1
+        nodeSelector:
+          karpenter.sh/controller: "true"     # Karpenter must never run on a node it manages
+        controller:
+          env:
+            - name: AWS_REGION   # don't rely on instance metadata (hop limit 1) to discover the region
+              value: us-east-1
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 512Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ServerSideApply=true]
+    retry: { limit: 10, backoff: { duration: 15s, factor: 2, maxDuration: 5m } }

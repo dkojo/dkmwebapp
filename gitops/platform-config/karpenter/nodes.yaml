@@ -1,0 +1,46 @@
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  role: dkm-karpenter-node               # from: scripts/tf.sh platform output karpenter_node_role_name
+  amiSelectorTerms:
+    - alias: al2023@latest
+  subnetSelectorTerms:
+    - tags: { karpenter.sh/discovery: dkm }
+  securityGroupSelectorTerms:
+    - tags: { karpenter.sh/discovery: dkm }
+  metadataOptions:
+    httpTokens: required                  # IMDSv2 only
+    httpPutResponseHopLimit: 2
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: [spot, on-demand]       # spot first; on-demand only if no spot capacity
+        - key: kubernetes.io/arch
+          operator: In
+          values: [amd64, arm64]          # arm64 = Graviton, cheaper; the image is multi-arch (Phase 6)
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: [t, c, m]
+        - key: karpenter.k8s.aws/instance-size
+          operator: In
+          values: [medium, large]
+      expireAfter: 168h                   # replace nodes weekly, so they always run a patched AMI
+  limits:
+    cpu: "8"                              # ⚠️ hard ceiling: Karpenter will never run more than 8 vCPUs in total
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m                  # remove idle nodes quickly to save money
