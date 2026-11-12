@@ -1,0 +1,34 @@
+{{- if .Values.rollout.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: dkmwebapp
+spec:
+  selector: { matchLabels: { app: dkmwebapp } }
+  template:
+    {{- include "dkmwebapp.podTemplate" . | nindent 4 }}
+  strategy:
+    canary:
+      stableService: dkmwebapp-stable
+      canaryService: dkmwebapp-canary
+      trafficRouting:
+        alb:
+          ingress: dkmwebapp
+          rootService: dkmwebapp
+          servicePort: 80
+      # Runs for the whole rollout, from the first step; any failure aborts the release
+      analysis:
+        templates:
+          - templateName: dkmwebapp-success-rate
+        startingStep: 1
+        args:
+          - name: canary-hash
+            valueFrom:
+              podTemplateHashValue: Latest
+      steps:
+        - setWeight: 10
+        - pause: { duration: 3m }
+        - setWeight: 50
+        - pause: { duration: 3m }
+        # after the last step, 100% goes to the new version
+{{- end }}

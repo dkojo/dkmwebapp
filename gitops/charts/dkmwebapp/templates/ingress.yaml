@@ -27,4 +27,9 @@ spec:
             backend:
               service:
                 name: dkmwebapp
-                port: { name: http }
+                port:
+                  {{- if .Values.rollout.enabled }}
+                  name: use-annotation       # Argo Rollouts manages the weights between stable and canary
+                  {{- else }}
+                  name: http
+                  {{- end }}

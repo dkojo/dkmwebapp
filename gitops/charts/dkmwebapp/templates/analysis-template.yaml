@@ -1,0 +1,22 @@
+{{- if .Values.rollout.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: dkmwebapp-success-rate
+spec:
+  args:
+    - name: canary-hash
+  metrics:
+    - name: success-rate
+      interval: 30s
+      failureLimit: 1          # two bad readings in a row abort the release
+      # No traffic yet (NaN) counts as a pass; the load generator in 10.4 guarantees traffic
+      successCondition: len(result) == 0 || isNaN(result[0]) || result[0] >= 0.95
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.observability:9090
+          query: |
+            sum(rate(http_server_requests_seconds_count{application="dkmwebapp", rollouts_pod_template_hash="{{ "{{" }}args.canary-hash{{ "}}" }}", uri!~"/actuator.*", status!~"5.."}[1m]))
+            /
+            sum(rate(http_server_requests_seconds_count{application="dkmwebapp", rollouts_pod_template_hash="{{ "{{" }}args.canary-hash{{ "}}" }}", uri!~"/actuator.*"}[1m]))
+{{- end }}

@@ -4,7 +4,11 @@ kind: ServiceMonitor
 metadata:
   name: dkmwebapp
 spec:
-  selector: { matchLabels: { app: dkmwebapp } }   # matches the stable and (Phase 10) canary Services
+  # Three Services select the same pods once Rollouts is on; scrape only the root one (metrics: "true"), and copy
+  # the pod-template-hash onto every series. That label is how the canary analysis tells new pods from old.
+  selector:
+    matchLabels: { app: dkmwebapp, metrics: "true" }
+  podTargetLabels: [rollouts-pod-template-hash]
   endpoints:
     - port: http
       path: /actuator/prometheus
