@@ -12,4 +12,26 @@ dex:
   enabled: false                        # no SSO needed for a personal cluster
 
 notifications:
-  enabled: true                         # Slack notifications are configured in Phase 6
+  enabled: true
+  secret:
+    create: false                       # External Secrets creates argocd-notifications-secret (Phase 7)
+  notifiers:
+    service.webhook.slack: |
+      url: $slack-webhook-url
+      headers:
+        - name: Content-Type
+          value: application/json
+  templates:
+    template.app-deployed: |
+      webhook:
+        slack:
+          method: POST
+          body: |
+            {"text": ":rocket: *{{.app.metadata.name}}* is live at Git revision {{ index .app.status.sync.revisions 0 | trunc 7 }} and Healthy"}
+  triggers:
+    # Multi-source apps (chart + values) record their commits in .revisions (a list); .revision stays empty.
+    trigger.on-deployed: |
+      - description: Synced and healthy after a new revision
+        oncePer: app.status.operationState.syncResult.revisions
+        send: [app-deployed]
+        when: app.status.operationState != nil and app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
