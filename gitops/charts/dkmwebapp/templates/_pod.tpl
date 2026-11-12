@@ -23,6 +23,12 @@ spec:
       envFrom:
         - secretRef: { name: dkm-db }       # DB_HOST, DB_PORT, DB_NAME, DB_USERNAME, DB_PASSWORD
       resources: {{- toYaml .Values.resources | nindent 8 }}
+      lifecycle:
+        # Keep serving while the ALB deregisters this pod. Without it, the ALB keeps sending requests for a few
+        # seconds to a pod that is already shutting down (measured: 2 failed requests per rolling update).
+        # The native sleep action needs no shell, which the distroless image doesn't have.
+        preStop:
+          sleep: { seconds: 15 }
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true

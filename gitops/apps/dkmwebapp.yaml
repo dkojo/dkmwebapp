@@ -23,4 +23,9 @@ spec:
   syncPolicy:
     automated: { prune: true, selfHeal: true }
     syncOptions: [CreateNamespace=true]
+    managedNamespaceMetadata:
+      labels:
+        # The Load Balancer Controller adds a readiness gate to each pod: a pod only counts as Ready once the ALB
+        # reports its target healthy, so a rolling update never removes old pods before new ones take traffic.
+        elbv2.k8s.aws/pod-readiness-gate-inject: enabled
     retry: { limit: 5, backoff: { duration: 15s, factor: 2, maxDuration: 3m } }
