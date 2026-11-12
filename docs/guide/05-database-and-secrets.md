@@ -217,15 +217,39 @@ kubectl -n dkm get secret db-test -o jsonpath='{.data}' | jq 'keys'   # ["dbname
 
 **Prove the database is reachable from the cluster, and only from it:**
 
-```bash
-DB_HOST=$(kubectl -n dkm get secret db-test -o jsonpath='{.data.host}' | base64 -d)
-kubectl -n dkm run mysql-check --rm -it --restart=Never --image=mysql:8.4 \
-  --env="MYSQL_PWD=$(kubectl -n dkm get secret db-test -o jsonpath='{.data.password}' | base64 -d)" \
-  -- mysql -h "$DB_HOST" -u shop_admin -e 'SELECT VERSION();'
-# 8.4.x
+The test pod reads the password from the Secret itself (`secretKeyRef`). Passing it with
+`kubectl run --env=MYSQL_PWD=…` would write it in plain text into the pod's spec, readable by anyone who can
+`kubectl get pod -o yaml`.
 
-# Same thing from your PC must fail: the database has no public address
-nslookup "$DB_HOST"     # resolves to a 10.0.x.x private address
+```bash
+cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mysql-check
+  namespace: dkm
+spec:
+  restartPolicy: Never
+  containers:
+    - name: mysql
+      image: mysql:8.4
+      env:
+        - name: MYSQL_PWD
+          valueFrom: { secretKeyRef: { name: db-test, key: password } }
+        - name: DB_HOST
+          valueFrom: { secretKeyRef: { name: db-test, key: host } }
+        - name: DB_USER
+          valueFrom: { secretKeyRef: { name: db-test, key: username } }
+      command: ["sh", "-c", "mysql -h \"$DB_HOST\" -u \"$DB_USER\" -N -e 'SELECT VERSION(), CURRENT_USER();'"]
+EOF
+kubectl -n dkm wait --for=jsonpath='{.status.phase}'=Succeeded pod/mysql-check --timeout=180s
+kubectl -n dkm logs mysql-check          # 8.4.x   shop_admin@%
+kubectl -n dkm delete pod mysql-check
+
+# From your PC it must fail: the database has only a private address
+DB_HOST=$(kubectl -n dkm get secret db-test -o jsonpath='{.data.host}' | base64 -d)
+nslookup "$DB_HOST"                                                   # a 10.0.x.x private address
+timeout 8 bash -c "echo > /dev/tcp/$DB_HOST/3306" && echo OPEN || echo "unreachable (correct)"
 ```
 
 Clean up the test: `kubectl -n dkm delete externalsecret db-test`. Deleting it also deletes `db-test`.
