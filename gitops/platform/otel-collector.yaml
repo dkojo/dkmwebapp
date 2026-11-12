@@ -27,6 +27,14 @@ spec:
           jaeger-grpc: { enabled: false }
           zipkin: { enabled: false }
         config:
+          processors:
+            # Kubernetes probes and the ALB health check hit /actuator every few seconds. Their spans were 40% of
+            # all traces and buried real requests, so drop them before they reach Tempo.
+            filter/drop-health:
+              error_mode: ignore
+              traces:
+                span:
+                  - 'IsMatch(attributes["url.path"], "^/actuator")'
           exporters:
             otlphttp/loki:
               endpoint: http://loki.observability:3100/otlp
@@ -37,11 +45,11 @@ spec:
             pipelines:
               logs:
                 receivers: [filelog]
-                processors: [k8sattributes, memory_limiter, batch]
+                processors: [memory_limiter, k8sattributes, batch]   # memory_limiter first: it must refuse data before others buffer it
                 exporters: [otlphttp/loki]
               traces:
                 receivers: [otlp]
-                processors: [k8sattributes, memory_limiter, batch]
+                processors: [memory_limiter, k8sattributes, filter/drop-health, batch]
                 exporters: [otlp/tempo]
   destination:
     server: https://kubernetes.default.svc
