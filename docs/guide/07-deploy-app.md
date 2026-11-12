@@ -93,6 +93,12 @@ spec:
       envFrom:
         - secretRef: { name: dkm-db }       # DB_HOST, DB_PORT, DB_NAME, DB_USERNAME, DB_PASSWORD
       resources: {{- toYaml .Values.resources | nindent 8 }}
+      lifecycle:
+        # Keep serving while the ALB deregisters this pod. Without it, the ALB keeps sending requests for a few
+        # seconds to a pod that is already shutting down (measured: 2 failed requests per rolling update).
+        # The native sleep action needs no shell, which the distroless image doesn't have.
+        preStop:
+          sleep: { seconds: 15 }
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
@@ -264,7 +270,7 @@ metadata:
   namespace: argocd
   finalizers: [resources-finalizer.argocd.argoproj.io]
   annotations:
-    notifications.argoproj.io/subscribe.on-deployed.slack: ""   # 7.4
+    notifications.argoproj.io/subscribe.on-deployed.slack: deployments   # the channel; the bot must be invited to it
 spec:
   project: default
   sources:
@@ -282,6 +288,11 @@ spec:
   syncPolicy:
     automated: { prune: true, selfHeal: true }
     syncOptions: [CreateNamespace=true]
+    managedNamespaceMetadata:
+      labels:
+        # The Load Balancer Controller adds a readiness gate to each pod: a pod only counts as Ready once the ALB
+        # reports its target healthy, so a rolling update never removes old pods before new ones take traffic.
+        elbv2.k8s.aws/pod-readiness-gate-inject: enabled
     retry: { limit: 5, backoff: { duration: 15s, factor: 2, maxDuration: 3m } }
 ```
 
@@ -340,16 +351,24 @@ Flyway creates the schema in RDS → the Load Balancer Controller creates an ALB
 CI already tells Slack when an image is published. This adds the message when it's actually **running**: the
 dashed "deploy notice" line in your diagram.
 
-**Store the webhook once, in Secrets Manager.** It's outside the platform stack, so it survives teardown
-(about $0.40/month):
+⚠️ **Use a Slack bot token here, not an incoming webhook.** Argo CD's webhook notifier logs every request URL,
+and an incoming webhook's URL *is* its credential. The first run of this guide used a webhook and found it in the
+notifications controller's logs (and Phase 8 would have shipped those logs to Loki). A bot token travels in a
+request header, which isn't logged. CI can keep its webhook: GitHub masks secrets in Actions logs.
 
-```bash
-aws secretsmanager create-secret --name dkm/slack-webhook \
-  --secret-string '{"url":"‹your Slack webhook URL›"}'
-```
+**Create the bot token** in the same Slack app as the CI webhook (https://api.slack.com/apps → your app):
 
-**Sync it into Argo CD** with External Secrets. External Secrets can read `dkm/*`, so no new permissions are
-needed. Create `gitops/platform-config/external-secrets/argocd-notifications-secret.yaml`:
+1. **OAuth & Permissions → Bot Token Scopes → Add an OAuth Scope → `chat:write`** (only this one).
+2. **Install to Workspace** (or Reinstall) → **Allow**. Don't opt into token rotation: rotated tokens expire every
+   12 hours and Argo CD can't refresh them.
+3. Copy the **Bot User OAuth Token** (`xoxb-…`). In `#deployments`, type `/invite @‹your app›`.
+
+**Store it in Secrets Manager**, outside the platform stack so it survives teardown (about $0.40/month).
+Console → Secrets Manager → **Store a new secret → Other type of secret**: key `token`, value the `xoxb-…`
+token, name `dkm/slack-bot1`. (Check the key really is `token`: the name easily ends up in the key box.)
+
+**Sync it into Argo CD** with External Secrets, which can already read `dkm/*`.
+`gitops/platform-config/external-secrets/argocd-notifications-secret.yaml`:
 
 ```yaml
 apiVersion: external-secrets.io/v1
@@ -362,46 +381,61 @@ spec:
   secretStoreRef: { kind: ClusterSecretStore, name: aws-secrets-manager }
   target:
     name: argocd-notifications-secret
-    creationPolicy: Merge            # the Argo CD chart may create this secret; add our key to it
+    # Owner: External Secrets creates this Secret. The Argo CD chart is told not to (notifications.secret.create:
+    # false), so "Merge" would wait forever for a Secret nobody creates.
+    creationPolicy: Owner
   data:
-    - secretKey: slack-webhook-url
-      remoteRef: { key: dkm/slack-webhook, property: url }
+    # A Slack bot token (chat:write only). Not an incoming webhook: Argo CD's webhook notifier logs request URLs,
+    # and a webhook's URL is its secret. The bot token travels in a header, which isn't logged.
+    - secretKey: slack-token
+      remoteRef: { key: dkm/slack-bot1, property: token }
 ```
 
-**Teach Argo CD the trigger and message.** Add to `gitops/bootstrap/argocd-values.yaml`, under the existing
-`notifications:` block:
+**Teach Argo CD the trigger and message.** Replace the `notifications:` block in
+`gitops/bootstrap/argocd-values.yaml`:
 
 ```yaml
 notifications:
   enabled: true
   secret:
-    create: false                    # External Secrets provides it
+    create: false                       # External Secrets creates argocd-notifications-secret (Phase 7)
   notifiers:
-    service.webhook.slack: |
-      url: $slack-webhook-url
-      headers:
-        - name: Content-Type
-          value: application/json
+    # Bot token in a header (see argocd-notifications-secret.yaml for why not a webhook)
+    service.slack: |
+      token: $slack-token
   templates:
     template.app-deployed: |
-      webhook:
-        slack:
-          method: POST
-          body: |
-            {"text": ":rocket: *{{.app.metadata.name}}* is live at Git revision {{ .app.status.sync.revision | trunc 7 }} and Healthy"}
+      message: ":rocket: *{{.app.metadata.name}}* is live at Git revision {{ index .app.status.sync.revisions 0 | trunc 7 }} and Healthy"
   triggers:
+    # Multi-source apps (chart + values) record their commits in .revisions (a list); .revision stays empty.
     trigger.on-deployed: |
       - description: Synced and healthy after a new revision
-        oncePer: app.status.sync.revision
+        oncePer: app.status.operationState.syncResult.revisions
         send: [app-deployed]
         when: app.status.operationState != nil and app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
 ```
 
-Apply the new values (Argo CD itself is the one thing installed by Helm, not by Argo CD):
+Two details that fail silently if you get them wrong:
+
+- **`creationPolicy: Owner`**, not `Merge`: with `secret.create: false` the chart no longer creates the Secret, and
+  `Merge` only ever adds to an existing one.
+- **`syncResult.revisions` and `sync.revisions`**, not `.revision`: an Application with two sources (chart + values)
+  leaves `.status.sync.revision` empty. Check with
+  `kubectl -n argocd get application dkmwebapp -o jsonpath='{.status.sync}'`.
+
+The Application subscribes by channel name (`subscribe.on-deployed.slack: deployments`, in 7.2).
+
+Order matters: push first, so External Secrets has created the token Secret, **then** upgrade Argo CD (the one
+thing installed by Helm, not by Argo CD):
 
 ```bash
 git add gitops && git commit -m "Send Argo CD deploy notifications to Slack" && git push
+kubectl -n argocd get secret argocd-notifications-secret -o jsonpath='{.data}' | jq 'keys'   # ["slack-token"]
 helm upgrade argocd argo/argo-cd -n argocd --version ‹argocd chart› -f gitops/bootstrap/argocd-values.yaml --wait
+kubectl -n argocd rollout restart deploy/argocd-notifications-controller
+
+# Prove no credential reaches the logs: count matches, never print them
+kubectl -n argocd logs deploy/argocd-notifications-controller | grep -cE 'hooks.slack.com|xox[bp]-'   # 0
 ```
 
 ---
@@ -432,6 +466,19 @@ curl -s https://app.danielkojomegbenu.com/api/products | jq length    # 4
 ```
 
 …and `#deployments` gets two messages: ✅ from CI, then 🚀 from Argo CD when it's live.
+The first run of this guide took about 5 minutes from `git push` to the new version answering.
+
+**Prove rolling updates drop nothing.** Send requests continuously while the pods are replaced:
+
+```bash
+U=https://app.danielkojomegbenu.com/api/version
+( end=$((SECONDS+150)); while [ $SECONDS -lt $end ]; do curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 $U; sleep 0.2; done ) > codes.txt &
+kubectl -n dkm rollout restart deploy/dkmwebapp && kubectl -n dkm rollout status deploy/dkmwebapp
+wait; sort codes.txt | uniq -c        # only 200s
+```
+
+Without the `preStop` sleep and the readiness-gate label (7.1, 7.2), this lost 2 of 308 requests: the ALB kept
+routing to pods that were already stopping. With them: 371 of 371 succeeded.
 
 ### If something goes wrong
 
