@@ -74,7 +74,7 @@ resource "aws_wafv2_web_acl" "dkm" {
     }
     statement {
       rate_based_statement {
-        limit              = 600 # requests per IP per 5 minutes; the 0.2 s load generator sends ~1,500 — see below
+        limit              = var.waf_rate_limit # per IP per 5 minutes; the 0.2 s load generator sends ~1,500, see below
         aggregate_key_type = "IP"
       }
     }
@@ -94,12 +94,12 @@ resource "aws_wafv2_web_acl" "dkm" {
 ```
 
 ⚠️ **The load generator from Phase 10 would trip the rate limit:** all its requests come from the NAT
-gateway's single IP. Either exempt that IP, or, simpler, raise `limit` to `3000` while you run canary tests.
+gateway's single IP. Either exempt that IP, or, simpler, set `waf_rate_limit = 3000` in `envs/prod.tfvars` while you run canary tests.
 Write down which one you chose in the README.
 
 ```bash
-terraform -chdir=infra/platform plan     # expect: 1 to add
-terraform -chdir=infra/platform apply
+scripts/tf.sh platform plan     # expect: 1 to add
+scripts/tf.sh platform apply
 ```
 
 ## 11.3 Attach it to the ALB

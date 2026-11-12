@@ -43,18 +43,32 @@ mkdir app && cd app && unzip -q ../app.zip && rm ../app.zip && cd ..
 ls app   # HELP.md  mvnw  mvnw.cmd  pom.xml  src
 ```
 
-`h2` is an in-memory database used only by the tests, so they don't need MySQL.
+`h2` is an in-memory database used only by the tests, so they don't need MySQL. The generator adds it with
+`runtime` scope plus a `spring-boot-h2console` dependency, which would ship H2 and its web console in the
+production image. In `app/pom.xml`, **delete the `spring-boot-h2console` dependency** and change H2's scope to
+`test`:
+
+```xml
+<dependency>
+  <groupId>com.h2database</groupId>
+  <artifactId>h2</artifactId>
+  <scope>test</scope>
+</dependency>
+```
+
+Also delete `app/HELP.md`.
 
 ### Add test coverage (SonarQube reads it in Phase 6)
 
-In `app/pom.xml`, inside `<build><plugins>`, add JaCoCo. Look up the latest version with
-`curl -s https://search.maven.org/solrsearch/select?q=g:org.jacoco+AND+a:jacoco-maven-plugin | jq -r '.response.docs[0].latestVersion'`:
+In `app/pom.xml`, inside `<build><plugins>`, add JaCoCo. Look up the latest version from Maven Central's
+metadata (the search.maven.org index can lag several releases behind):
+`curl -s https://repo1.maven.org/maven2/org/jacoco/jacoco-maven-plugin/maven-metadata.xml | grep '<release>'`
 
 ```xml
 <plugin>
   <groupId>org.jacoco</groupId>
   <artifactId>jacoco-maven-plugin</artifactId>
-  <version>‹latest, e.g. 0.8.14›</version>
+  <version>‹latest, e.g. 0.8.16›</version>
   <executions>
     <execution><goals><goal>prepare-agent</goal></goals></execution>
     <execution><id>report</id><phase>verify</phase><goals><goal>report</goal></goals></execution>
@@ -225,15 +239,30 @@ management:
 rm app/src/main/resources/application.properties
 ```
 
-### Test configuration: `app/src/test/resources/application.yml`
+### Test configuration: `app/src/test/resources/application-test.yml`
 
 ```yaml
+# Loaded on top of src/main/resources/application.yml when the "test" profile is active (see @ActiveProfiles).
+# Keep the name: a test application.yml would replace the main file entirely instead of overriding it.
 spring:
   datasource:
     url: jdbc:h2:mem:dkm;MODE=MySQL;DATABASE_TO_LOWER=TRUE
     username: sa
     password: ""
 ```
+
+⚠️ Don't name this file `application.yml`. A test `application.yml` **replaces** the main one instead of
+adding to it, so the tests would silently lose every main setting, including the actuator exposure, and
+`/actuator/prometheus` would return 404. As a profile file it only overrides the datasource. Each test class
+turns it on with `@ActiveProfiles("test")`; add that to the generated `DkmwebappApplicationTests.java` too:
+
+```java
+@SpringBootTest
+@ActiveProfiles("test")          // H2 instead of MySQL, from application-test.yml
+class DkmwebappApplicationTests {
+```
+
+(import `org.springframework.test.context.ActiveProfiles`).
 
 ### A real test: `app/src/test/java/com/danielmegbenu/dkmwebapp/ProductControllerTest.java`
 
@@ -244,15 +273,20 @@ import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.micrometer.metrics.test.autoconfigure.AutoConfigureMetrics;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
+@ActiveProfiles("test")          // H2 instead of MySQL, from application-test.yml
 @AutoConfigureMockMvc
+@AutoConfigureMetrics            // Spring Boot turns off metrics export in tests; this brings /actuator/prometheus back
 class ProductControllerTest {
     @Autowired MockMvc mvc;
 
@@ -275,6 +309,27 @@ class ProductControllerTest {
     }
 
     @Test
+    void createsAndFetchesProduct() throws Exception {
+        String body = mvc.perform(post("/api/products").contentType(MediaType.APPLICATION_JSON)
+                                 .content("{\"name\":\"Webcam\",\"price\":49.99}"))
+           .andExpect(status().isCreated())
+           .andExpect(jsonPath("$.id", notNullValue()))
+           .andExpect(jsonPath("$.name").value("Webcam"))
+           .andReturn().getResponse().getContentAsString();
+        Number id = JsonPath.read(body, "$.id");
+        mvc.perform(get("/api/products/" + id))
+           .andExpect(status().isOk())
+           .andExpect(jsonPath("$.price").value(49.99));
+    }
+
+    @Test
+    void reportsVersion() throws Exception {
+        mvc.perform(get("/api/version"))
+           .andExpect(status().isOk())
+           .andExpect(jsonPath("$.version").value("dev"));
+    }
+
+    @Test
     void exposesHealthAndMetrics() throws Exception {
         mvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk());
         mvc.perform(get("/actuator/prometheus")).andExpect(status().isOk());
@@ -282,13 +337,55 @@ class ProductControllerTest {
 }
 ```
 
-> If your Spring Boot version moved `AutoConfigureMockMvc` to a different package, your IDE's quick-fix shows the
-> new import. Spring Boot 4 split some test auto-configuration into separate modules.
+Two Spring Boot 4 details: `AutoConfigureMockMvc` lives in `org.springframework.boot.webmvc.test.autoconfigure`,
+and `@AutoConfigureMetrics` is needed because Spring Boot switches off metrics export in tests, which would
+remove the Prometheus endpoint.
+
+### The fault switch test: `app/src/test/java/com/danielmegbenu/dkmwebapp/FaultInjectionTest.java`
+
+```java
+package com.danielmegbenu.dkmwebapp;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+
+// The fault switch Phase 10 uses to prove a bad canary is rolled back: at error-rate 1, every list request fails.
+@SpringBootTest(properties = "app.fault.error-rate=1")
+@ActiveProfiles("test")
+@AutoConfigureMockMvc
+class FaultInjectionTest {
+    @Autowired MockMvc mvc;
+
+    @Test
+    void failsListRequestsWhenFaultIsOn() throws Exception {
+        mvc.perform(get("/api/products")).andExpect(status().isInternalServerError());
+    }
+
+    @Test
+    void leavesOtherEndpointsAlone() throws Exception {
+        mvc.perform(get("/api/version")).andExpect(status().isOk());
+    }
+}
+```
+
+These extra tests matter in Phase 6: SonarQube Cloud's default quality gate needs **80% coverage**, and the
+first four tests alone reach only about 58%.
 
 ```bash
-cd app && ./mvnw -B verify && cd ..
-# Tests run: 5, Failures: 0 ... BUILD SUCCESS   (4 tests + the generated context test)
+cd app && ./mvnw -B clean verify && cd ..
+# Tests run: 9, Failures: 0 ... BUILD SUCCESS
+# Coverage report: app/target/site/jacoco/index.html (about 94%)
 ```
+
+Use `clean` whenever you rename or delete a resource file: otherwise the old copy stays in `target/` and is
+still loaded.
 
 ---
 
@@ -312,8 +409,9 @@ COPY src src
 RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -q package -DskipTests \
  && cp target/dkmwebapp-*.jar /app.jar
 
-# Distroless: no shell, no package manager, runs as UID 65532
-FROM gcr.io/distroless/java21-debian12:nonroot
+# Distroless on Debian 13: no shell, no package manager, runs as UID 65532. The Debian 12 image lags on
+# security fixes (Trivy found 10 fixable HIGH/CRITICAL there), so use the newer base.
+FROM gcr.io/distroless/java21-debian13:nonroot
 COPY --from=build /app.jar /app/app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "/app/app.jar"]
@@ -371,8 +469,8 @@ curl -s localhost:8080/api/version                        # {"version":"local"}
 curl -s localhost:8080/actuator/health/readiness          # {"status":"UP"}
 curl -s localhost:8080/actuator/prometheus | grep -c http_server_requests_seconds_bucket   # a number > 0
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/api/products/999   # 404
-docker image ls --format '{{.Repository}} {{.Size}}' | grep api   # roughly 200–250 MB
-trivy image --severity CRITICAL,HIGH --exit-code 1 dkmwebapp-api && echo "no critical/high CVEs"
+docker image ls --format '{{.Repository}} {{.Size}}' | grep api   # about 375 MB in Docker Desktop (about 250 MB of layers; it counts compressed + unpacked)
+trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 dkmwebapp-api && echo "no fixable critical/high CVEs"
 ```
 
 Then stop it: `docker compose down -v`.
@@ -383,7 +481,8 @@ Then stop it: `docker compose down -v`.
 |---|---|
 | `Communications link failure` at startup | MySQL wasn't ready. `docker compose up` again; the health check should prevent it. |
 | `Schema-validation: missing table [products]` | The migration file name must be exactly `V1__products.sql` (two underscores) in `db/migration`. |
-| Trivy reports a CRITICAL in the base image | Pull the newest base (`docker compose build --pull`). Distroless images are rebuilt often. |
+| Trivy reports a fixable CRITICAL/HIGH in the base image | Pull the newest base (`docker compose build --pull`). Distroless images are rebuilt often. Findings with no fix yet are skipped by `--ignore-unfixed`, the same rule the CI scan uses in Phase 6. |
+| `/actuator/prometheus` returns 404 in tests | The test config is named `application.yml` (it must be `application-test.yml`), or `@AutoConfigureMetrics` is missing. Then `./mvnw clean verify`. |
 
 ## Commit
 
