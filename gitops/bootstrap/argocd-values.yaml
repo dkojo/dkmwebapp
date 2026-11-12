@@ -29,3 +29,9 @@ notifications:
         oncePer: app.status.operationState.syncResult.revisions
         send: [app-deployed]
         when: app.status.operationState != nil and app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
+
+# Phase 8: let Prometheus scrape Argo CD, for the DORA deployment-frequency panel (argocd_app_sync_total)
+controller:
+  metrics:
+    enabled: true
+    serviceMonitor: { enabled: true }

@@ -10,7 +10,7 @@ $(scripts/tf.sh platform output -raw configure_kubectl)
 
 helm repo add argo https://argoproj.github.io/argo-helm >/dev/null 2>&1 || true
 helm upgrade --install argocd argo/argo-cd --namespace argocd --create-namespace \
-  --version 10.18.0 -f gitops/bootstrap/argocd-values.yaml --wait
+  --version 10.18.0 -f gitops/bootstrap/argocd-values.yaml --wait --timeout 10m
 
 # Only the Kubernetes objects: argocd-values.yaml in the same folder is a Helm values file, not a manifest.
 kubectl apply -f gitops/bootstrap/karpenter-oci-repo.yaml -f gitops/bootstrap/root.yaml -f gitops/bootstrap/apps-root.yaml
