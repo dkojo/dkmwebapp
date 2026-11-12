@@ -16,18 +16,12 @@ notifications:
   secret:
     create: false                       # External Secrets creates argocd-notifications-secret (Phase 7)
   notifiers:
-    service.webhook.slack: |
-      url: $slack-webhook-url
-      headers:
-        - name: Content-Type
-          value: application/json
+    # Bot token in a header (see argocd-notifications-secret.yaml for why not a webhook)
+    service.slack: |
+      token: $slack-token
   templates:
     template.app-deployed: |
-      webhook:
-        slack:
-          method: POST
-          body: |
-            {"text": ":rocket: *{{.app.metadata.name}}* is live at Git revision {{ index .app.status.sync.revisions 0 | trunc 7 }} and Healthy"}
+      message: ":rocket: *{{.app.metadata.name}}* is live at Git revision {{ index .app.status.sync.revisions 0 | trunc 7 }} and Healthy"
   triggers:
     # Multi-source apps (chart + values) record their commits in .revisions (a list); .revision stays empty.
     trigger.on-deployed: |

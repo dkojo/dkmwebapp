@@ -5,7 +5,7 @@ metadata:
   namespace: argocd
   finalizers: [resources-finalizer.argocd.argoproj.io]
   annotations:
-    notifications.argoproj.io/subscribe.on-deployed.slack: ""   # 7.4
+    notifications.argoproj.io/subscribe.on-deployed.slack: deployments   # the channel; the bot must be invited to it
 spec:
   project: default
   sources:
