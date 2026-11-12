@@ -1,0 +1,26 @@
+image:
+  repository: ""        # set in gitops/envs/prod/values.yaml
+  digest: ""            # set by CI
+  version: ""           # set by CI
+
+replicas: 2
+
+resources:
+  requests: { cpu: 250m, memory: 512Mi }
+  limits: { memory: 768Mi }   # no CPU limit: avoids throttling; requests drive scheduling
+
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPU: 70
+
+faultErrorRate: "0"     # Phase 10 raises this to prove rollback works
+
+ingress:
+  host: app.danielkojomegbenu.com
+
+rollout:
+  enabled: false        # Phase 10 switches the Deployment to an Argo Rollouts canary
+
+metrics:
+  serviceMonitor: false # Phase 8 turns this on once Prometheus exists

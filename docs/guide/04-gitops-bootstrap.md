@@ -409,7 +409,7 @@ helm upgrade --install argocd argo/argo-cd --namespace argocd --create-namespace
   --version ‹argocd chart› -f gitops/bootstrap/argocd-values.yaml --wait
 
 # Only the Kubernetes objects: argocd-values.yaml in the same folder is a Helm values file, not a manifest.
-kubectl apply -f gitops/bootstrap/karpenter-oci-repo.yaml -f gitops/bootstrap/root.yaml
+kubectl apply -f gitops/bootstrap/karpenter-oci-repo.yaml -f gitops/bootstrap/root.yaml   # Phase 7 adds apps-root.yaml
 echo "Argo CD is syncing. Watch with: kubectl -n argocd get applications -w"
 ```
 

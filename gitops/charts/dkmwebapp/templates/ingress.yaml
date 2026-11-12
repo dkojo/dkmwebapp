@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dkmwebapp
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip                 # traffic goes straight to pod IPs
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
+    alb.ingress.kubernetes.io/group.name: dkm                # Phase 10's canary shares this ALB
+spec:
+  ingressClassName: alb
+  # The controller finds the ACM certificate for this host by itself (certificate discovery),
+  # so no certificate ARN, and no account ID, is needed here
+  tls:
+    - hosts: [{{ .Values.ingress.host }}]
+  rules:
+    - host: {{ .Values.ingress.host }}                        # ExternalDNS creates the Route 53 record from this
+      http:
+        paths:
+          # Only the API is public. /actuator (metrics, health) stays inside the cluster: the ALB answers 404 for it.
+          # Prometheus scrapes it in-cluster and the ALB health check reaches pods directly, so neither needs this route.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: dkmwebapp
+                port: { name: http }

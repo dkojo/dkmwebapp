@@ -306,7 +306,11 @@ spec:
     automated: { prune: true, selfHeal: true }
 ```
 
-`session-up.sh` already applies everything in `gitops/bootstrap/`, so future sessions pick this up automatically.
+Add it to the `kubectl apply` line in `scripts/session-up.sh`, so future sessions bring the app back by themselves:
+
+```bash
+kubectl apply -f gitops/bootstrap/karpenter-oci-repo.yaml -f gitops/bootstrap/root.yaml -f gitops/bootstrap/apps-root.yaml
+```
 
 ---
 

@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dkmwebapp
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+  annotations:
+    notifications.argoproj.io/subscribe.on-deployed.slack: ""   # 7.4
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/dkojo/dkmwebapp.git
+      targetRevision: remodelled
+      path: gitops/charts/dkmwebapp
+      helm:
+        valueFiles: [$values/gitops/envs/prod/values.yaml]
+    - repoURL: https://github.com/dkojo/dkmwebapp.git
+      targetRevision: remodelled
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dkm
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]
+    retry: { limit: 5, backoff: { duration: 15s, factor: 2, maxDuration: 3m } }
