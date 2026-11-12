@@ -5,3 +5,6 @@ image:
 
 metrics:
   serviceMonitor: true   # Phase 8: Prometheus scrapes /actuator/prometheus, alert rules on
+
+rollout:
+  enabled: true          # Phase 10: Argo Rollouts canary (10% -> 50% -> 100%) with Prometheus analysis

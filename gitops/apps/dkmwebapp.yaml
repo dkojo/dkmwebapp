@@ -22,7 +22,9 @@ spec:
     namespace: dkm
   syncPolicy:
     automated: { prune: true, selfHeal: true }
-    syncOptions: [CreateNamespace=true]
+    # PruneLast: when the Deployment is replaced by the Rollout (Phase 10), delete the old Deployment only after
+    # everything else, including the Rollout's pods, is synced and healthy, so traffic never has zero pods.
+    syncOptions: [CreateNamespace=true, PruneLast=true]
     managedNamespaceMetadata:
       labels:
         # The Load Balancer Controller adds a readiness gate to each pod: a pod only counts as Ready once the ALB
