@@ -40,8 +40,8 @@ public class ProductController {
 
     @PostMapping("/products")
     @ResponseStatus(HttpStatus.CREATED)
-    public Product create(@Valid @RequestBody Product product) {
-        return products.save(product);
+    public Product create(@Valid @RequestBody NewProduct request) {
+        return products.save(request.toEntity());
     }
 
     @GetMapping("/version")

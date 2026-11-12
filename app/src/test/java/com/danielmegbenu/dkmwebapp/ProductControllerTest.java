@@ -54,6 +54,20 @@ class ProductControllerTest {
     }
 
     @Test
+    void createIgnoresClientSuppliedIdSoItCannotOverwriteARow() throws Exception {
+        String before = mvc.perform(get("/api/products/1")).andReturn().getResponse().getContentAsString();
+        String body = mvc.perform(post("/api/products").contentType(MediaType.APPLICATION_JSON)
+                                 .content("{\"id\":1,\"name\":\"Overwritten\",\"price\":0}"))
+           .andExpect(status().isCreated())
+           .andReturn().getResponse().getContentAsString();
+        Number newId = JsonPath.read(body, "$.id");
+        org.junit.jupiter.api.Assertions.assertNotEquals(1, newId.intValue(), "a new product must get a new id");
+        mvc.perform(get("/api/products/1"))
+           .andExpect(status().isOk())
+           .andExpect(content().json(before));        // product 1 is unchanged
+    }
+
+    @Test
     void reportsVersion() throws Exception {
         mvc.perform(get("/api/version"))
            .andExpect(status().isOk())

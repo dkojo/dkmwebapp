@@ -122,6 +122,30 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface ProductRepository extends JpaRepository<Product, Long> {}
 ```
 
+**`NewProduct.java`**: what a client may send. It has no `id` on purpose: binding a request straight to the
+entity let a client send `{"id": 1, …}` and overwrite an existing row (mass assignment, flagged by SonarQube as
+S4684 on the first CI run):
+
+```java
+package com.danielmegbenu.dkmwebapp;
+
+import jakarta.validation.constraints.*;
+import java.math.BigDecimal;
+
+/**
+ * What a client may send to create a product. It deliberately has no id: binding the request straight to the
+ * JPA entity let a client send {"id": 1, ...} and overwrite an existing row (mass assignment, Sonar S4684).
+ */
+public record NewProduct(
+        @NotBlank @Size(max = 120) String name,
+        @NotNull @DecimalMin("0.00") BigDecimal price) {
+
+    Product toEntity() {
+        return new Product(name, price);
+    }
+}
+```
+
 **`ProductController.java`**: the API, plus the fault switch used in Phase 10:
 
 ```java
@@ -167,8 +191,8 @@ public class ProductController {
 
     @PostMapping("/products")
     @ResponseStatus(HttpStatus.CREATED)
-    public Product create(@Valid @RequestBody Product product) {
-        return products.save(product);
+    public Product create(@Valid @RequestBody NewProduct request) {
+        return products.save(request.toEntity());
     }
 
     @GetMapping("/version")
@@ -323,6 +347,20 @@ class ProductControllerTest {
     }
 
     @Test
+    void createIgnoresClientSuppliedIdSoItCannotOverwriteARow() throws Exception {
+        String before = mvc.perform(get("/api/products/1")).andReturn().getResponse().getContentAsString();
+        String body = mvc.perform(post("/api/products").contentType(MediaType.APPLICATION_JSON)
+                                 .content("{\"id\":1,\"name\":\"Overwritten\",\"price\":0}"))
+           .andExpect(status().isCreated())
+           .andReturn().getResponse().getContentAsString();
+        Number newId = JsonPath.read(body, "$.id");
+        org.junit.jupiter.api.Assertions.assertNotEquals(1, newId.intValue(), "a new product must get a new id");
+        mvc.perform(get("/api/products/1"))
+           .andExpect(status().isOk())
+           .andExpect(content().json(before));        // product 1 is unchanged
+    }
+
+    @Test
     void reportsVersion() throws Exception {
         mvc.perform(get("/api/version"))
            .andExpect(status().isOk())
@@ -380,8 +418,8 @@ first four tests alone reach only about 58%.
 
 ```bash
 cd app && ./mvnw -B clean verify && cd ..
-# Tests run: 9, Failures: 0 ... BUILD SUCCESS
-# Coverage report: app/target/site/jacoco/index.html (about 94%)
+# Tests run: 10, Failures: 0 ... BUILD SUCCESS
+# Coverage report: app/target/site/jacoco/index.html (about 95%)
 ```
 
 Use `clean` whenever you rename or delete a resource file: otherwise the old copy stays in `target/` and is
@@ -413,6 +451,9 @@ RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -q package -DskipTests \
 # security fixes (Trivy found 10 fixable HIGH/CRITICAL there), so use the newer base.
 FROM gcr.io/distroless/java21-debian13:nonroot
 COPY --from=build /app.jar /app/app.jar
+# The :nonroot base already runs as 65532; stating it makes it visible to scanners, and a numeric UID lets
+# Kubernetes verify runAsNonRoot (Phase 9) without trusting the image metadata.
+USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "/app/app.jar"]
 ```
