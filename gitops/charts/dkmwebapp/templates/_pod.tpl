@@ -20,6 +20,16 @@ spec:
       env:
         - { name: APP_VERSION, value: {{ .Values.image.version | quote }} }
         - { name: FAULT_ERROR_RATE, value: {{ .Values.faultErrorRate | quote }} }
+        - name: NODE_IP
+          valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+        - { name: JAVA_TOOL_OPTIONS, value: "-javaagent:/app/otel.jar" }
+        - { name: OTEL_SERVICE_NAME, value: dkmwebapp }
+        - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://$(NODE_IP):4318" }   # this node's collector
+        - { name: OTEL_EXPORTER_OTLP_PROTOCOL, value: http/protobuf }
+        - { name: OTEL_TRACES_EXPORTER, value: otlp }
+        - { name: OTEL_METRICS_EXPORTER, value: none }   # metrics come from Micrometer → Prometheus
+        - { name: OTEL_LOGS_EXPORTER, value: none }      # logs come from the collector reading pod logs
+        - { name: OTEL_RESOURCE_ATTRIBUTES, value: "service.version={{ .Values.image.version }}" }
       envFrom:
         - secretRef: { name: dkm-db }       # DB_HOST, DB_PORT, DB_NAME, DB_USERNAME, DB_PASSWORD
       resources: {{- toYaml .Values.resources | nindent 8 }}
