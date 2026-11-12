@@ -1,0 +1,52 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: otel-collector
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  source:
+    repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
+    chart: opentelemetry-collector
+    targetRevision: 0.178.3
+    helm:
+      valuesObject:
+        mode: daemonset
+        image:
+          repository: otel/opentelemetry-collector-k8s
+        presets:
+          logsCollection: { enabled: true }        # tails /var/log/pods on each node
+          kubernetesAttributes: { enabled: true }  # adds namespace, pod and app labels to everything
+        ports:
+          otlp: { enabled: true, hostPort: 4317 }        # pods send traces to their own node's collector
+          otlp-http: { enabled: true, hostPort: 4318 }
+          # Unused protocols: don't open them on every node
+          jaeger-compact: { enabled: false }
+          jaeger-thrift: { enabled: false }
+          jaeger-grpc: { enabled: false }
+          zipkin: { enabled: false }
+        config:
+          exporters:
+            otlphttp/loki:
+              endpoint: http://loki.observability:3100/otlp
+            otlp/tempo:
+              endpoint: tempo.observability:4317
+              tls: { insecure: true }              # in-cluster traffic
+          service:
+            pipelines:
+              logs:
+                receivers: [filelog]
+                processors: [k8sattributes, memory_limiter, batch]
+                exporters: [otlphttp/loki]
+              traces:
+                receivers: [otlp]
+                processors: [k8sattributes, memory_limiter, batch]
+                exporters: [otlp/tempo]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]
+    retry: { limit: 10, backoff: { duration: 15s, factor: 2, maxDuration: 5m } }
