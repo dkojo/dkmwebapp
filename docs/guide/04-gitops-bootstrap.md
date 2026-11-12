@@ -163,7 +163,10 @@ spec:
       valuesObject:
         clusterName: dkm
         region: us-east-1
-        # vpcId is discovered from the node's instance metadata, so nothing changes when the VPC is recreated
+        # Find the VPC by its Name tag. The nodes' IMDS hop limit is 1 (pods can't read instance metadata),
+        # and a tag lookup keeps working when the VPC is recreated each session, unlike a hard-coded vpcId.
+        vpcTags:
+          Name: dkm
         replicaCount: 1
         serviceAccount:
           name: aws-load-balancer-controller   # matches the Pod Identity association from Phase 3
@@ -273,6 +276,9 @@ spec:
         nodeSelector:
           karpenter.sh/controller: "true"     # Karpenter must never run on a node it manages
         controller:
+          env:
+            - name: AWS_REGION   # don't rely on instance metadata (hop limit 1) to discover the region
+              value: us-east-1
           resources:
             requests: { cpu: 250m, memory: 512Mi }
             limits: { memory: 512Mi }
@@ -390,17 +396,20 @@ From now on a session starts with infrastructure, Argo CD and the root app. `scr
 ```bash
 #!/usr/bin/env bash
 # Start of a work session: create the platform stack, then hand the cluster to Argo CD.
+#   scripts/session-up.sh              # prod
+#   ENV=dev scripts/session-up.sh      # another environment (see infra/platform/envs/)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-scripts/tf.sh platform apply -auto-approve      # ENV=dev scripts/session-up.sh for another environment
+scripts/tf.sh platform apply -auto-approve
 $(scripts/tf.sh platform output -raw configure_kubectl)
 
 helm repo add argo https://argoproj.github.io/argo-helm >/dev/null 2>&1 || true
 helm upgrade --install argocd argo/argo-cd --namespace argocd --create-namespace \
   --version ‹argocd chart› -f gitops/bootstrap/argocd-values.yaml --wait
 
-kubectl apply -f gitops/bootstrap/
+# Only the Kubernetes objects: argocd-values.yaml in the same folder is a Helm values file, not a manifest.
+kubectl apply -f gitops/bootstrap/karpenter-oci-repo.yaml -f gitops/bootstrap/root.yaml
 echo "Argo CD is syncing. Watch with: kubectl -n argocd get applications -w"
 ```
 
@@ -428,7 +437,9 @@ kubectl -n argocd get applications
 kubectl get nodepool,ec2nodeclass                 # default / default, READY True
 ```
 
-**Prove Karpenter works** by asking for more CPU than the system nodes have:
+**Prove Karpenter works** by asking for more CPU than the system nodes have. Expect a node in under a minute
+(the first run of this guide got a spot `t2.medium` in 46 seconds) and its removal about 2 minutes after the
+deployment is deleted:
 
 ```bash
 kubectl create deployment inflate --image=public.ecr.aws/eks-distro/kubernetes/pause:3.9 --replicas=0
@@ -445,7 +456,8 @@ kubectl get nodes -w             # about 1–2 minutes later, consolidation remo
 | Symptom | Fix |
 |---|---|
 | App stuck `Unknown` / `ComparisonError` mentioning OCI | The `karpenter-oci` repository secret wasn't applied. `kubectl apply -f gitops/bootstrap/karpenter-oci-repo.yaml`. |
-| Load Balancer Controller logs `failed to get VPC ID` | The node's metadata hop limit is 1. Add `vpcId: ‹scripts/tf.sh platform output vpc_id›` to its values (and update it each session), or check the node group's metadata options. |
+| Load Balancer Controller logs `failed to get VPC ID` | Pods can't read instance metadata (the nodes' hop limit is 1, deliberately). Check `vpcTags: { Name: dkm }` is in its values and that the VPC's `Name` tag is `dkm`: `aws ec2 describe-vpcs --filters Name=tag:Name,Values=dkm`. Don't raise the hop limit: that would let every pod use the node's IAM role. |
+| Karpenter logs `no subnets found` in its first minute | A start-up race: it asked before reading the EC2NodeClass. If `kubectl get ec2nodeclass default` shows `READY True` and the errors stop, ignore it. If they continue, the private subnets are missing the `karpenter.sh/discovery: dkm` tag. |
 | NodeClaim stays `Unknown`, Karpenter logs mention `AccessDenied` | The Pod Identity association for `kube-system/karpenter` is missing. Check `aws eks list-pod-identity-associations --cluster-name dkm`. |
 | No NodeClaim appears at all | `kubectl -n kube-system logs deploy/karpenter`. Usually the `interruptionQueue` name is wrong. |
 | ExternalDNS logs `AccessDenied` on Route 53 | Its zone ARN in `pod-identity.tf` must be the `danielkojomegbenu.com` zone. |
