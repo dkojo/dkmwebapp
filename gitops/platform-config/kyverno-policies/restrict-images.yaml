@@ -1,21 +1,26 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+# An allow-list, not just a digest rule: the signature policy only looks at dkmwebapp images, so without this any
+# other image (a public one, pinned, with limits) could still run in dkm.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: restrict-images
 spec:
-  rules:
-    - name: only-digest-pinned-dkmwebapp-from-ecr
-      match:
-        any:
-          - resources:
-              kinds: [Pod]
-              namespaces: [dkm]
-      validate:
-        failureAction: Audit
-        message: "The dkm namespace only runs dkmwebapp images from this account's ECR, pinned by digest (…/dkmwebapp@sha256:…)."
-        pattern:
-          spec:
-            containers:
-              - image: "*.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp@sha256:*"
-            =(initContainers):
-              - image: "*.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp@sha256:*"
+  validationActions: [Audit]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchLabels: { kubernetes.io/metadata.name: dkm }
+  variables:
+    - name: allowed
+      # CEL raw string (r'…'), so the backslashes reach the regex engine unchanged
+      expression: >-
+        r'^[0-9]{12}\.dkr\.ecr\.us-east-1\.amazonaws\.com/dkmwebapp@sha256:[a-f0-9]{64}$'
+  validations:
+    - expression: >-
+        object.spec.containers.all(c, c.image.matches(variables.allowed)) &&
+        (!has(object.spec.initContainers) || object.spec.initContainers.all(c, c.image.matches(variables.allowed)))
+      message: "The dkm namespace only runs dkmwebapp images from this account's ECR, pinned by digest (…/dkmwebapp@sha256:…)."

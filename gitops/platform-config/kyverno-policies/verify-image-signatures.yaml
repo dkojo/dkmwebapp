@@ -1,35 +1,39 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+# Kyverno 1.20 no longer enforces legacy kyverno.io ClusterPolicies, so these use the CEL-based policies.kyverno.io
+# types. ImageValidatingPolicy verifies Cosign v3's Sigstore bundles (attached as OCI referrers); tested before
+# enforcing: the CI-signed image was admitted, a hand-pushed unsigned one was denied.
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
 metadata:
   name: verify-dkmwebapp-signature
-  annotations:
-    policies.kyverno.io/description: >-
-      dkmwebapp images must be signed (Cosign keyless) by the CI workflow on remodelled of dkojo/dkmwebapp.
 spec:
-  webhookTimeoutSeconds: 30
-  rules:
-    - name: signed-by-ci-on-remodelled
-      match:
-        any:
-          - resources:
-              kinds: [Pod]
-              namespaces: [dkm]
-      verifyImages:
-        - imageReferences:
-            - "*.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp*"
-          # Cosign v3 stores signatures as Sigstore bundles attached as OCI referrers, not as sha256-….sig tags,
-          # so the default "Cosign" type would find nothing and reject every genuinely signed image.
-          type: SigstoreBundle
-          failureAction: Audit               # start by reporting; switched to Enforce once the app passes
-          imageRegistryCredentials:
-            providers: [amazon]            # Kyverno's Pod Identity role reads the signatures from ECR
-          mutateDigest: true
-          verifyDigest: true
-          required: true
-          attestors:
-            - entries:
-                - keyless:
-                    issuer: https://token.actions.githubusercontent.com
-                    subject: https://github.com/dkojo/dkmwebapp/.github/workflows/ci.yml@refs/heads/remodelled
-                    rekor:
-                      url: https://rekor.sigstore.dev
+  validationActions: [Audit]               # report first; Deny once the policy report shows the app passing
+  failurePolicy: Fail                       # if Kyverno can't verify, the pod doesn't start
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchLabels: { kubernetes.io/metadata.name: dkm }
+  matchImageReferences:
+    - glob: "*.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp*"
+  credentials:
+    providers: [amazon]                     # Kyverno's Pod Identity role (ECR read-only) fetches the signatures
+  validationConfigurations:
+    mutateDigest: true                      # a tag is resolved to the digest that was verified
+    verifyDigest: true
+    required: true
+  attestors:
+    - name: ci
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subject: https://github.com/dkojo/dkmwebapp/.github/workflows/ci.yml@refs/heads/remodelled
+        ctlog:
+          url: https://rekor.sigstore.dev     # the signature must be in the public transparency log
+  validations:
+    - expression: >-
+        images.containers.map(image, verifyImageSignatures(image, [attestors.ci])).all(e, e > 0)
+      message: "dkmwebapp images must be signed (Cosign keyless) by ci.yml on remodelled of dkojo/dkmwebapp"
