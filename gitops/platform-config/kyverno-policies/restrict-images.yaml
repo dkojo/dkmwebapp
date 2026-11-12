@@ -1,0 +1,21 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-images
+spec:
+  rules:
+    - name: only-digest-pinned-dkmwebapp-from-ecr
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [dkm]
+      validate:
+        failureAction: Audit
+        message: "The dkm namespace only runs dkmwebapp images from this account's ECR, pinned by digest (…/dkmwebapp@sha256:…)."
+        pattern:
+          spec:
+            containers:
+              - image: "*.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp@sha256:*"
+            =(initContainers):
+              - image: "*.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp@sha256:*"

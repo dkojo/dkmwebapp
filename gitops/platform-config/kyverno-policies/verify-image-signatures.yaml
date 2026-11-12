@@ -1,0 +1,35 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-dkmwebapp-signature
+  annotations:
+    policies.kyverno.io/description: >-
+      dkmwebapp images must be signed (Cosign keyless) by the CI workflow on remodelled of dkojo/dkmwebapp.
+spec:
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: signed-by-ci-on-remodelled
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [dkm]
+      verifyImages:
+        - imageReferences:
+            - "*.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp*"
+          # Cosign v3 stores signatures as Sigstore bundles attached as OCI referrers, not as sha256-….sig tags,
+          # so the default "Cosign" type would find nothing and reject every genuinely signed image.
+          type: SigstoreBundle
+          failureAction: Audit               # start by reporting; switched to Enforce once the app passes
+          imageRegistryCredentials:
+            providers: [amazon]            # Kyverno's Pod Identity role reads the signatures from ECR
+          mutateDigest: true
+          verifyDigest: true
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: https://token.actions.githubusercontent.com
+                    subject: https://github.com/dkojo/dkmwebapp/.github/workflows/ci.yml@refs/heads/remodelled
+                    rekor:
+                      url: https://rekor.sigstore.dev

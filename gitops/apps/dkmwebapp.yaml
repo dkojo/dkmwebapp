@@ -28,4 +28,7 @@ spec:
         # The Load Balancer Controller adds a readiness gate to each pod: a pod only counts as Ready once the ALB
         # reports its target healthy, so a rolling update never removes old pods before new ones take traffic.
         elbv2.k8s.aws/pod-readiness-gate-inject: enabled
+        # Pod Security Admission: Kubernetes itself rejects root, privileged or host-access pods here (Phase 9)
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/warn: restricted
     retry: { limit: 5, backoff: { duration: 15s, factor: 2, maxDuration: 3m } }

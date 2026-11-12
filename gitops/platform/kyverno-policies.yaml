@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno-policies
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/dkojo/dkmwebapp.git
+    targetRevision: remodelled
+    path: gitops/platform-config/kyverno-policies
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ServerSideApply=true, SkipDryRunOnMissingResource=true]   # the CRDs arrive with the kyverno app
+    retry: { limit: 10, backoff: { duration: 15s, factor: 2, maxDuration: 5m } }

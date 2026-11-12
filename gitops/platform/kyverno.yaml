@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  source:
+    repoURL: https://kyverno.github.io/kyverno
+    chart: kyverno
+    targetRevision: 3.10.0                 # Kyverno v1.20.0
+    helm:
+      valuesObject:
+        # The admission controller's service account is kyverno-admission-controller by default, which matches
+        # the Pod Identity association from Phase 3 (ECR read-only, to fetch signatures).
+        admissionController: { replicas: 1 }     # production: 3, for availability (its webhook fails closed)
+        backgroundController: { replicas: 1 }
+        cleanupController: { replicas: 1 }
+        reportsController: { replicas: 1 }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]
+    retry: { limit: 10, backoff: { duration: 15s, factor: 2, maxDuration: 5m } }
