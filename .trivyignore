@@ -1,0 +1,14 @@
+# Accepted Trivy findings. Each one is deliberate; the reason is next to it.
+# Re-check this list whenever the architecture changes.
+
+# ECR tags are mutable on purpose: Cosign stores signatures as tags (sha256-<digest>.sig), and deploys pin
+# image@sha256:<digest>, which can never point at different content. (infra/foundation/ecr.tf)
+AVD-AWS-0031
+
+# EKS API endpoint is public but restricted to the admin's /32 (admin_cidrs). Production: private endpoint
+# reached through a VPN or SSM. (terraform-aws-modules/eks)
+AVD-AWS-0040
+
+# Node security group allows all egress: nodes must reach ECR, AWS APIs and image registries. Egress
+# filtering belongs in a network firewall or proxy, not in node security groups. (terraform-aws-modules/eks)
+AVD-AWS-0104

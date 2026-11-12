@@ -16,5 +16,8 @@ RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -q package -DskipTests \
 # security fixes (Trivy found 10 fixable HIGH/CRITICAL there), so use the newer base.
 FROM gcr.io/distroless/java21-debian13:nonroot
 COPY --from=build /app.jar /app/app.jar
+# The :nonroot base already runs as 65532; stating it makes it visible to scanners, and a numeric UID lets
+# Kubernetes verify runAsNonRoot (Phase 9) without trusting the image metadata.
+USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "/app/app.jar"]

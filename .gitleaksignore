@@ -1,0 +1,4 @@
+# False positives, reviewed 2026-11-12: Secrets Manager ARNs (identifiers, not credentials) in 2024 commits.
+# The secret they point to no longer exists. Exact fingerprints only, so any new finding still fails CI.
+e649609951f986ef099d55c3856743f36ef5ffd9:terraform/rds/main.tf:generic-api-key:6
+f99a837776ece27ccef86a73f234d3c42df0cd24:terraform/rds/main.tf:generic-api-key:6
