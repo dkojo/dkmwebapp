@@ -1,4 +1,4 @@
 image:
   repository: 870342665742.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp
-  digest: ""          # set by CI: sha256:…
-  version: ""         # set by CI: short commit SHA, shown at /api/version
+  digest: "sha256:7ea5bf3d25b975817da1bcb1f798015b63a1931f5e95ba2b769c0a66aa3ec481"
+  version: "2c60eb6"
