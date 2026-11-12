@@ -3,7 +3,7 @@ kind: ValidatingPolicy
 metadata:
   name: require-requests-and-limits
 spec:
-  validationActions: [Audit]
+  validationActions: [Deny]
   matchConstraints:
     resourceRules:
       - apiGroups: [""]

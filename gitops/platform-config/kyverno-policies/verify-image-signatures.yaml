@@ -6,7 +6,7 @@ kind: ImageValidatingPolicy
 metadata:
   name: verify-dkmwebapp-signature
 spec:
-  validationActions: [Audit]               # report first; Deny once the policy report shows the app passing
+  validationActions: [Deny]                # enforced after the policy report showed every app pod passing
   failurePolicy: Fail                       # if Kyverno can't verify, the pod doesn't start
   matchConstraints:
     resourceRules:

@@ -5,7 +5,7 @@ kind: ValidatingPolicy
 metadata:
   name: restrict-images
 spec:
-  validationActions: [Audit]
+  validationActions: [Deny]
   matchConstraints:
     resourceRules:
       - apiGroups: [""]
