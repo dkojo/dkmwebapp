@@ -56,7 +56,7 @@ Credentials and anything containing your account ID go in **secrets**, which Git
 gh secret set SONAR_TOKEN        --repo dkojo/dkmwebapp     # paste the SonarQube token
 gh secret set SLACK_WEBHOOK_URL  --repo dkojo/dkmwebapp     # paste the webhook URL
 gh secret set AWS_CI_ROLE_ARN    --repo dkojo/dkmwebapp \
-  --body "$(terraform -chdir=infra/foundation output -raw ci_role_arn)"
+  --body "$(scripts/tf.sh foundation output -raw ci_role_arn)"
 
 gh variable set SONAR_PROJECT_KEY  --repo dkojo/dkmwebapp --body "dkojo_dkmwebapp"
 gh variable set SONAR_ORGANIZATION --repo dkojo/dkmwebapp --body "‹your organization key›"
@@ -68,7 +68,7 @@ Create `gitops/envs/prod/values.yaml` (Phase 7 uses it). CI only ever rewrites t
 
 ```yaml
 image:
-  repository: ‹terraform -chdir=infra/foundation output -raw ecr_repository_url›
+  repository: ‹scripts/tf.sh foundation output -raw ecr_repository_url›
   digest: ""          # set by CI: sha256:…
   version: ""         # set by CI: short commit SHA, shown at /api/version
 ```
@@ -277,7 +277,7 @@ git pull                                     # brings in the bot's "Deploy dkmwe
 grep -E 'digest|version' gitops/envs/prod/values.yaml     # digest: "sha256:…"  version: "‹short sha›"
 
 # The image is signed by this workflow, on remodelled:
-IMAGE="$(terraform -chdir=infra/foundation output -raw ecr_repository_url)@$(grep digest gitops/envs/prod/values.yaml | cut -d'"' -f2)"
+IMAGE="$(scripts/tf.sh foundation output -raw ecr_repository_url)@$(grep digest gitops/envs/prod/values.yaml | cut -d'"' -f2)"
 aws ecr get-login-password | docker login --username AWS --password-stdin "${IMAGE%%/*}"
 cosign verify "$IMAGE" \
   --certificate-identity-regexp '^https://github.com/dkojo/dkmwebapp/\.github/workflows/ci\.yml@refs/heads/remodelled$' \
@@ -300,7 +300,7 @@ Also check: SonarQube Cloud shows the project with a **Passed** quality gate, an
 
 | Symptom | Fix |
 |---|---|
-| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | The trust condition doesn't match the token. Compare `gh api repos/dkojo/dkmwebapp/actions/oidc/customization/sub` with `github_oidc_subject_prefix` in `infra/foundation/terraform.tfvars`. |
+| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | The trust condition doesn't match the token. Compare `gh api repos/dkojo/dkmwebapp/actions/oidc/customization/sub` with `github_oidc_subject_prefix` in `infra/foundation/envs/prod.tfvars`. |
 | SonarQube: `You are running CI analysis while Automatic Analysis is enabled` | Turn Automatic Analysis off (6.2). |
 | SonarQube quality gate fails on coverage | Expected at first if tests are thin. Add tests, or adjust the gate in SonarQube Cloud (Quality Gates). |
 | Bump step: `! [rejected] … (fetch first)` | Another commit landed. The `git pull --rebase` should handle it; re-run the job if two runs overlapped. |

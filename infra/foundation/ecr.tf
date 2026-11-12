@@ -21,14 +21,14 @@ resource "aws_ecr_lifecycle_policy" "app" {
     rules = [
       {
         rulePriority = 1
-        description  = "Remove untagged layers after 14 days"
-        selection    = { tagStatus = "untagged", countType = "sinceImagePushed", countUnit = "days", countNumber = 14 }
+        description  = "Remove untagged layers after ${var.ecr_untagged_expiry_days} days"
+        selection    = { tagStatus = "untagged", countType = "sinceImagePushed", countUnit = "days", countNumber = var.ecr_untagged_expiry_days }
         action       = { type = "expire" }
       },
       {
         rulePriority = 2
-        description  = "Keep the 50 most recent images"
-        selection    = { tagStatus = "any", countType = "imageCountMoreThan", countNumber = 50 }
+        description  = "Keep the ${var.ecr_keep_images} most recent images"
+        selection    = { tagStatus = "any", countType = "imageCountMoreThan", countNumber = var.ecr_keep_images }
         action       = { type = "expire" }
       }
     ]

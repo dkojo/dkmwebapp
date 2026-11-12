@@ -15,18 +15,18 @@ data "aws_iam_policy_document" "ci_trust" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
-    # Only workflow runs on remodelled may push images. Pull requests build and scan, but never touch AWS.
+    # Only workflow runs on the listed branches may push images. Pull requests build and scan, but never touch AWS.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["${var.github_oidc_subject_prefix}:ref:refs/heads/remodelled"]
+      values   = [for b in var.ci_branches : "${var.github_oidc_subject_prefix}:ref:refs/heads/${b}"]
     }
   }
 }
 
 resource "aws_iam_role" "ci" {
-  name               = "eks-dkm-ci"
-  description        = "GitHub Actions in dkojo/dkmwebapp pushes images to ECR"
+  name               = "${var.name_prefix}-ci"
+  description        = "GitHub Actions in ${var.github_repo} pushes images to ECR"
   assume_role_policy = data.aws_iam_policy_document.ci_trust.json
 }
 
@@ -48,7 +48,7 @@ data "aws_iam_policy_document" "ci" {
 }
 
 resource "aws_iam_role_policy" "ci" {
-  name   = "push-dkmwebapp"
+  name   = "push-${var.app_name}"
   role   = aws_iam_role.ci.id
   policy = data.aws_iam_policy_document.ci.json
 }

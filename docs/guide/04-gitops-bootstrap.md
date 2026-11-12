@@ -266,7 +266,7 @@ spec:
       valuesObject:
         settings:
           clusterName: dkm
-          interruptionQueue: Karpenter-dkm   # check: terraform -chdir=infra/platform output karpenter_queue_name
+          interruptionQueue: Karpenter-dkm   # check: scripts/tf.sh platform output karpenter_queue_name
         serviceAccount:
           name: karpenter
         replicas: 1
@@ -316,7 +316,7 @@ kind: EC2NodeClass
 metadata:
   name: default
 spec:
-  role: dkm-karpenter-node               # from terraform output karpenter_node_role_name
+  role: dkm-karpenter-node               # from: scripts/tf.sh platform output karpenter_node_role_name
   amiSelectorTerms:
     - alias: al2023@latest
   subnetSelectorTerms:
@@ -393,8 +393,8 @@ From now on a session starts with infrastructure, Argo CD and the root app. `scr
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-terraform -chdir=infra/platform apply -auto-approve
-aws eks update-kubeconfig --region us-east-1 --name dkm
+scripts/tf.sh platform apply -auto-approve      # ENV=dev scripts/session-up.sh for another environment
+$(scripts/tf.sh platform output -raw configure_kubectl)
 
 helm repo add argo https://argoproj.github.io/argo-helm >/dev/null 2>&1 || true
 helm upgrade --install argocd argo/argo-cd --namespace argocd --create-namespace \
@@ -409,7 +409,7 @@ git update-index --chmod=+x scripts/session-up.sh   # so it's executable on Linu
 ```
 
 ⚠️ `-auto-approve` is acceptable here only because this stack's plan is the same every session. If you changed
-anything in `infra/platform`, run `terraform plan` yourself first.
+anything in `infra/platform`, run `scripts/tf.sh platform plan` yourself first.
 
 ---
 
@@ -445,7 +445,7 @@ kubectl get nodes -w             # about 1–2 minutes later, consolidation remo
 | Symptom | Fix |
 |---|---|
 | App stuck `Unknown` / `ComparisonError` mentioning OCI | The `karpenter-oci` repository secret wasn't applied. `kubectl apply -f gitops/bootstrap/karpenter-oci-repo.yaml`. |
-| Load Balancer Controller logs `failed to get VPC ID` | The node's metadata hop limit is 1. Add `vpcId: ‹terraform output vpc_id›` to its values (and update it each session), or check the node group's metadata options. |
+| Load Balancer Controller logs `failed to get VPC ID` | The node's metadata hop limit is 1. Add `vpcId: ‹scripts/tf.sh platform output vpc_id›` to its values (and update it each session), or check the node group's metadata options. |
 | NodeClaim stays `Unknown`, Karpenter logs mention `AccessDenied` | The Pod Identity association for `kube-system/karpenter` is missing. Check `aws eks list-pod-identity-associations --cluster-name dkm`. |
 | No NodeClaim appears at all | `kubectl -n kube-system logs deploy/karpenter`. Usually the `interruptionQueue` name is wrong. |
 | ExternalDNS logs `AccessDenied` on Route 53 | Its zone ARN in `pod-identity.tf` must be the `danielkojomegbenu.com` zone. |
@@ -466,7 +466,7 @@ git push
 > kubectl -n argocd delete application platform          # root app: stops it recreating its children (they keep running)
 > kubectl -n argocd delete application karpenter-nodes   # its finalizer deletes the NodePool; Karpenter terminates its nodes
 > kubectl get nodeclaims -w                              # wait until this is empty, then Ctrl+C
-> terraform -chdir=infra/platform destroy
+> scripts/tf.sh platform destroy
 > ```
 > [Phase 12](12-portfolio-and-teardown.md#teardown) turns this into a `session-down.sh` script that also handles
 > load balancers.

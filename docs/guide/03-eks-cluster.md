@@ -25,7 +25,7 @@ The cluster's API endpoint will only accept connections from your IP:
 curl -s https://checkip.amazonaws.com    # e.g. 203.0.113.25
 ```
 
-If your home IP changes later, `kubectl` will time out. Update `admin_cidrs` and run `terraform apply` again.
+If your home IP changes later, `kubectl` will time out. Update `admin_cidrs` in `envs/prod.tfvars` and run `scripts/tf.sh platform apply` again.
 
 ---
 
@@ -42,23 +42,19 @@ terraform {
       version = "~> 6.0"
     }
   }
-  backend "s3" {
-    bucket       = "danielkojomegbenu-tfstate"
-    key          = "eks/platform.tfstate"
-    region       = "us-east-1"
-    encrypt      = true
-    use_lockfile = true
-  }
+  # Partial backend: bucket, key and region come from envs/<env>.backend.hcl (scripts/tf.sh passes it)
+  backend "s3" {}
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region = var.aws_region
   default_tags {
     tags = {
-      Project   = "dkmwebapp"
-      Stack     = "platform"
-      ManagedBy = "terraform"
-      Repo      = "dkojo/dkmwebapp"
+      Project     = var.app_name
+      Environment = var.environment
+      Stack       = "platform"
+      ManagedBy   = "terraform"
+      Repo        = var.github_repo
     }
   }
 }
@@ -70,11 +66,58 @@ data "aws_region" "current" {}
 ### `variables.tf`
 
 ```hcl
-variable "cluster_name" {
-  type    = string
-  default = "dkm"
+# ---- Identity and placement ----
+variable "environment" {
+  description = "Environment name, e.g. prod or dev. Tags every resource."
+  type        = string
 }
 
+variable "aws_region" {
+  type    = string
+  default = "us-east-1"
+}
+
+variable "cluster_name" {
+  description = "Names the VPC, cluster and every role and resource derived from it"
+  type        = string
+  default     = "dkm"
+}
+
+variable "app_name" {
+  type    = string
+  default = "dkmwebapp"
+}
+
+variable "github_repo" {
+  type    = string
+  default = "dkojo/dkmwebapp"
+}
+
+variable "domain_name" {
+  description = "Existing Route 53 public zone ExternalDNS may write to"
+  type        = string
+}
+
+# ---- Network ----
+variable "vpc_cidr" {
+  description = "VPC range. Subnets are carved from it automatically: a /20 private, /24 public and /24 database per AZ."
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "az_count" {
+  description = "How many availability zones to spread across"
+  type        = number
+  default     = 3
+}
+
+variable "single_nat_gateway" {
+  description = "true: one NAT for all AZs (about $65/month cheaper). Production: false, one per AZ."
+  type        = bool
+  default     = true
+}
+
+# ---- Cluster ----
 variable "kubernetes_version" {
   description = "Newest version in standard support (step 3.1)"
   type        = string
@@ -85,17 +128,115 @@ variable "admin_cidrs" {
   type        = list(string)
 }
 
-variable "domain_name" {
+variable "system_node_instance_types" {
+  type    = list(string)
+  default = ["t3.medium"]
+}
+
+variable "system_node_count" {
+  description = "Size of the fixed system node group. Karpenter adds everything else on demand."
+  type        = object({ min = number, max = number, desired = number })
+  default     = { min = 2, max = 3, desired = 2 }
+}
+
+# ---- Database (Phase 5) ----
+variable "db_instance_class" {
   type    = string
-  default = "danielkojomegbenu.com"
+  default = "db.t4g.micro"
+}
+
+variable "db_engine_version" {
+  type    = string
+  default = "8.4"
+}
+
+variable "db_allocated_storage_gb" {
+  type    = number
+  default = 20
+}
+
+variable "db_multi_az" {
+  description = "Standby in a second AZ. Doubles the cost; production: true."
+  type        = bool
+  default     = false
+}
+
+variable "db_deletion_protection" {
+  description = "true also keeps a final snapshot on destroy. Demo: false, so each session starts clean."
+  type        = bool
+  default     = false
+}
+
+# ---- Web Application Firewall (Phase 11) ----
+variable "waf_rate_limit" {
+  description = "Requests per IP per 5 minutes before WAF blocks that IP"
+  type        = number
+  default     = 600
 }
 ```
 
-### `terraform.tfvars`
+### `envs/prod.tfvars`: this environment's values
 
 ```hcl
+# Production settings for infra/platform. Used by: scripts/tf.sh platform <command>
+environment        = "prod"
+aws_region         = "us-east-1"
+cluster_name       = "dkm"
+domain_name        = "danielkojomegbenu.com"
 kubernetes_version = "‹from 3.1, e.g. 1.35›"
 admin_cidrs        = ["‹your IP›/32"]
+
+# Sizes. Everything below matches the defaults; it's listed so the cost drivers are in one place.
+vpc_cidr                   = "10.0.0.0/16"
+az_count                   = 3
+single_nat_gateway         = true
+system_node_instance_types = ["t3.medium"]
+system_node_count          = { min = 2, max = 3, desired = 2 }
+db_instance_class          = "db.t4g.micro"
+db_allocated_storage_gb    = 20
+db_multi_az                = false
+db_deletion_protection     = false
+```
+
+### `envs/prod.backend.hcl`
+
+```hcl
+bucket       = "danielkojomegbenu-tfstate"
+key          = "eks/platform-prod.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true
+```
+
+### `envs/dev.tfvars` and `envs/dev.backend.hcl` (optional): proof the stack is reusable
+
+A second, smaller cluster from the same code, with its own network range and its own state. You don't need to
+create it: `ENV=dev scripts/tf.sh platform plan` shows what it would build (about 110 resources once Phases 5 and
+11 are in) without touching prod.
+
+```hcl
+# Example second environment: a smaller, separate cluster with its own network range and state.
+# Terraform side only. The gitops/ folder targets the prod cluster ("dkm"); a dev cluster would need its own
+# Argo CD values (cluster name in the Karpenter settings, hostname) before it could run the app.
+environment        = "dev"
+aws_region         = "us-east-1"
+cluster_name       = "dkm-dev"
+domain_name        = "danielkojomegbenu.com"
+kubernetes_version = "‹from 3.1, e.g. 1.35›"
+admin_cidrs        = ["‹your IP›/32"]
+
+vpc_cidr                   = "10.1.0.0/16"
+az_count                   = 2
+system_node_instance_types = ["t3.small"]
+system_node_count          = { min = 1, max = 2, desired = 2 }
+```
+
+```hcl
+bucket       = "danielkojomegbenu-tfstate"
+key          = "eks/platform-dev.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true
 ```
 
 ### `vpc.tf`
@@ -109,8 +250,8 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  azs  = slice(data.aws_availability_zones.available.names, 0, 3)
-  cidr = "10.0.0.0/16"
+  azs  = slice(data.aws_availability_zones.available.names, 0, var.az_count)
+  cidr = var.vpc_cidr
 }
 
 module "vpc" {
@@ -121,15 +262,16 @@ module "vpc" {
   cidr = local.cidr
   azs  = local.azs
 
-  private_subnets  = [for i, _ in local.azs : cidrsubnet(local.cidr, 4, i)]      # 10.0.0.0/20 … nodes and pods
-  public_subnets   = [for i, _ in local.azs : cidrsubnet(local.cidr, 8, i + 48)] # 10.0.48.0/24 … load balancers
-  database_subnets = [for i, _ in local.azs : cidrsubnet(local.cidr, 8, i + 52)] # 10.0.52.0/24 … RDS (Phase 5)
+  private_subnets  = [for i, _ in local.azs : cidrsubnet(local.cidr, 4, i)]      # /20 each (10.0.0.0/20 …): nodes and pods
+  public_subnets   = [for i, _ in local.azs : cidrsubnet(local.cidr, 8, i + 48)] # /24 each (10.0.48.0/24 …): load balancers
+  database_subnets = [for i, _ in local.azs : cidrsubnet(local.cidr, 8, i + 52)] # /24 each (10.0.52.0/24 …): RDS (Phase 5)
 
   create_database_subnet_group = true
 
-  # One NAT gateway instead of three: about $65/month cheaper. Production would use one per AZ.
-  enable_nat_gateway = true
-  single_nat_gateway = true
+  # One NAT gateway instead of one per AZ saves about $65/month (single_nat_gateway in envs/<env>.tfvars)
+  enable_nat_gateway     = true
+  single_nat_gateway     = var.single_nat_gateway
+  one_nat_gateway_per_az = !var.single_nat_gateway
 
   public_subnet_tags = {
     "kubernetes.io/role/elb" = 1 # the Load Balancer Controller puts internet-facing ALBs here
@@ -174,10 +316,10 @@ module "eks" {
   eks_managed_node_groups = {
     system = {
       ami_type       = "AL2023_x86_64_STANDARD"
-      instance_types = ["t3.medium"]
-      min_size       = 2
-      max_size       = 3
-      desired_size   = 2
+      instance_types = var.system_node_instance_types
+      min_size       = var.system_node_count.min
+      max_size       = var.system_node_count.max
+      desired_size   = var.system_node_count.desired
       labels = {
         "karpenter.sh/controller" = "true"
       }
@@ -252,9 +394,9 @@ module "external_secrets_pod_identity" {
 
   name                           = "${var.cluster_name}-external-secrets"
   attach_external_secrets_policy = true
-  # Only secrets under "dkm/" (the database connection, Phase 5). Nothing else in the account is readable.
+  # Only secrets under "<cluster_name>/" (the database connection, Phase 5). Nothing else in the account is readable.
   external_secrets_secrets_manager_arns = [
-    "arn:aws:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:secret:dkm/*",
+    "arn:aws:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:secret:${var.cluster_name}/*",
   ]
   associations = {
     this = { cluster_name = module.eks.cluster_name, namespace = "external-secrets", service_account = "external-secrets" }
@@ -307,7 +449,7 @@ output "karpenter_queue_name" {
 }
 
 output "configure_kubectl" {
-  value = "aws eks update-kubeconfig --region us-east-1 --name ${module.eks.cluster_name}"
+  value = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}"
 }
 ```
 
@@ -316,20 +458,18 @@ output "configure_kubectl" {
 ## 3.4 💰 Create the cluster
 
 ```bash
-cd infra/platform
-terraform init
-terraform fmt -check && terraform validate
-terraform plan -out=platform.tfplan
+terraform -chdir=infra/platform fmt -check -recursive
+scripts/tf.sh platform validate
+scripts/tf.sh platform plan -out=platform.tfplan
 ```
 
 Expect roughly **80–100 resources to add** (the modules create many small pieces) and **0 to change or destroy**.
 Check that the list includes `module.eks.aws_eks_cluster.this[0]`, one NAT gateway and the node group.
 
 ```bash
-terraform apply platform.tfplan     # 15–20 minutes; the cluster itself takes about 10
-rm platform.tfplan
-$(terraform output -raw configure_kubectl)
-cd ../..
+scripts/tf.sh platform apply platform.tfplan     # 15–20 minutes; the cluster itself takes about 10
+rm infra/platform/platform.tfplan
+$(scripts/tf.sh platform output -raw configure_kubectl)
 ```
 
 ---
@@ -356,9 +496,9 @@ kubectl auth can-i '*' '*' --all-namespaces    # yes
 
 | Symptom | Fix |
 |---|---|
-| `kubectl` hangs or times out | Your IP changed. Update `admin_cidrs`, then `terraform apply`. |
+| `kubectl` hangs or times out | Your IP changed. Update `admin_cidrs` in `envs/prod.tfvars`, then `scripts/tf.sh platform apply`. |
 | `You must be logged in to the server (Unauthorized)` | The kubeconfig was made by a different AWS identity. Run `aws sts get-caller-identity`, then the `configure_kubectl` command again. |
-| Apply fails on an add-on with `CREATE_FAILED … no nodes` | Rare timing issue. Run `terraform apply` again. |
+| Apply fails on an add-on with `CREATE_FAILED … no nodes` | Rare timing issue. Run `scripts/tf.sh platform apply` again. |
 | `metrics-server` add-on not found | Check that it's offered for your version: `aws eks describe-addon-versions --addon-name metrics-server --kubernetes-version ‹v›`. If not, remove it from `addons`; Phase 4 can install it with Argo CD. |
 
 ## Commit
@@ -374,9 +514,9 @@ git push
 > ### 🛑 End of session
 > If you stop here, **destroy the platform stack** so it stops billing:
 > ```bash
-> terraform -chdir=infra/platform destroy     # about 10–15 minutes
+> scripts/tf.sh platform destroy     # about 10–15 minutes
 > ```
-> The foundation stack (ECR, certificate, CI role) stays. Next session, `terraform apply` brings everything
+> The foundation stack (ECR, certificate, CI role) stays. Next session, `scripts/tf.sh platform apply` brings everything
 > back the same way. From Phase 4 on, destroying needs a few extra steps first, covered in each phase and in
 > [Phase 12](12-portfolio-and-teardown.md#teardown).
 

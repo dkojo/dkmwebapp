@@ -216,11 +216,11 @@ kubectl -n dkm run test1 --image=public.ecr.aws/docker/library/nginx:1.27 --dry-
 #   (Pod Security Admission also reports it would run as root)
 
 # 2. Your own repository, but a tag instead of a digest
-kubectl -n dkm run test2 --image="$(terraform -chdir=infra/foundation output -raw ecr_repository_url):latest" --dry-run=server
+kubectl -n dkm run test2 --image="$(scripts/tf.sh foundation output -raw ecr_repository_url):latest" --dry-run=server
 # → denied by restrict-images (not pinned by digest)
 
 # 3. Your own repository, but an image CI never signed (push one by hand to prove it)
-REPO=$(terraform -chdir=infra/foundation output -raw ecr_repository_url)
+REPO=$(scripts/tf.sh foundation output -raw ecr_repository_url)
 aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO%%/*}"
 docker pull busybox:1.37 && docker tag busybox:1.37 "$REPO:unsigned-test" && docker push "$REPO:unsigned-test"
 DIGEST=$(aws ecr describe-images --repository-name dkmwebapp --image-ids imageTag=unsigned-test --query 'imageDetails[0].imageDigest' --output text)

@@ -413,7 +413,7 @@ curl -s https://app.danielkojomegbenu.com/api/products | jq length    # 3, serve
 curl -sI http://app.danielkojomegbenu.com | head -3             # 301 → https
 curl -s -o /dev/null -w '%{http_code}\n' https://app.danielkojomegbenu.com/actuator/prometheus   # 404: not exposed publicly
 
-aws route53 list-resource-record-sets --hosted-zone-id "$(terraform -chdir=infra/foundation output -raw route53_zone_id)" \
+aws route53 list-resource-record-sets --hosted-zone-id "$(scripts/tf.sh foundation output -raw route53_zone_id)" \
   --query "ResourceRecordSets[?contains(Name,'app.')].[Name,Type]" --output text
 # app.danielkojomegbenu.com. A   (plus ExternalDNS ownership TXT records)
 ```

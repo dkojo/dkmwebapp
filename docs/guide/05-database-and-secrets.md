@@ -56,10 +56,10 @@ resource "random_password" "db" {
 resource "aws_db_instance" "dkm" {
   identifier     = "${var.cluster_name}-mysql"
   engine         = "mysql"
-  engine_version = "8.4"
-  instance_class = "db.t4g.micro"
+  engine_version = var.db_engine_version
+  instance_class = var.db_instance_class
 
-  allocated_storage = 20
+  allocated_storage = var.db_allocated_storage_gb
   storage_type      = "gp3"
   storage_encrypted = true
 
@@ -71,17 +71,19 @@ resource "aws_db_instance" "dkm" {
   vpc_security_group_ids = [aws_security_group.db.id]
   publicly_accessible    = false
 
-  multi_az                = false # demo cost; production: true
+  multi_az                = var.db_multi_az # demo: false; production: true
   backup_retention_period = 1
-  skip_final_snapshot     = true # Flyway recreates the schema and sample data every session
-  deletion_protection     = false
-  apply_immediately       = true
+  # Demo: no final snapshot, because Flyway recreates the schema and sample data every session
+  deletion_protection       = var.db_deletion_protection
+  skip_final_snapshot       = !var.db_deletion_protection
+  final_snapshot_identifier = var.db_deletion_protection ? "${var.cluster_name}-mysql-final" : null
+  apply_immediately         = true
 }
 
 resource "aws_secretsmanager_secret" "db" {
-  name        = "dkm/db"
+  name        = "${var.cluster_name}/db"
   description = "dkmwebapp database connection, synced into the cluster by External Secrets"
-  # Delete immediately on destroy, so next session can create "dkm/db" again without a name clash
+  # Delete immediately on destroy, so next session can create the same name again without a clash
   recovery_window_in_days = 0
 }
 
@@ -110,17 +112,18 @@ Add the `random` provider to `infra/platform/versions.tf`:
 and why `*.tfstate` is in `.gitignore`. Never copy state files anywhere else.
 
 Also update the External Secrets permission you wrote in Phase 3, if you wrote it before this change:
-in `pod-identity.tf`, the ARN must end in `secret:dkm/*`.
+in `pod-identity.tf`, the ARN must end in `secret:${var.cluster_name}/*`.
 
 ### 💰 Apply
 
 ```bash
-cd infra/platform
-terraform init -upgrade       # picks up the random provider
-terraform plan -out=db.tfplan # expect: 5 to add (SG, password, DB, secret, secret version); 1 change only if you fixed the ESO ARN
-terraform apply db.tfplan && rm db.tfplan
-cd ../..
+scripts/tf.sh platform init -upgrade        # picks up the random provider
+scripts/tf.sh platform plan -out=db.tfplan  # expect: 5 to add (SG, password, DB, secret, secret version); 1 change only if you fixed the ESO ARN
+scripts/tf.sh platform apply db.tfplan && rm infra/platform/db.tfplan
 ```
+
+Size, Multi-AZ and deletion protection are variables (`db_*` in `variables.tf`). Change them in
+`envs/prod.tfvars`, not in this file.
 
 ---
 
@@ -237,7 +240,7 @@ Clean up the test: `kubectl -n dkm delete externalsecret db-test`. Deleting it a
 
 > ### 🛑 End of session
 > Same as Phase 4 (delete `platform`, then `karpenter-nodes`, wait for nodes to go), then
-> `terraform -chdir=infra/platform destroy`. The database and its secret are deleted too. Nothing to keep:
+> `scripts/tf.sh platform destroy`. The database and its secret are deleted too. Nothing to keep:
 > Flyway recreates the schema next session.
 
 **Next:** [Phase 6: CI pipeline](06-ci-pipeline.md)

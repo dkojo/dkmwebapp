@@ -15,6 +15,12 @@ re-validated.
 
 Create `infra/foundation/` with these files.
 
+**Reusable by design.** Nothing environment-specific is written into the `.tf` files. Region, names, domain,
+branches and limits are variables, and their values live in one file per environment in `envs/`:
+`envs/prod.tfvars` (the values) and `envs/prod.backend.hcl` (where the state lives). Another account, region or
+app is a new pair of files, not a code change. `scripts/tf.sh` (end of this section) passes the right pair to
+Terraform, so you never type `-var-file` or `-backend-config` yourself.
+
 ### `versions.tf`
 
 ```hcl
@@ -28,24 +34,19 @@ terraform {
     }
   }
 
-  # Same state bucket as the portfolio, different key. S3 native locking, no DynamoDB.
-  backend "s3" {
-    bucket       = "danielkojomegbenu-tfstate"
-    key          = "eks/foundation.tfstate"
-    region       = "us-east-1"
-    encrypt      = true
-    use_lockfile = true
-  }
+  # Partial backend: the bucket, key and region come from envs/<env>.backend.hcl at init time
+  # (scripts/tf.sh does this), so the same code can keep separate state per environment or account.
+  backend "s3" {}
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region = var.aws_region
   default_tags {
     tags = {
-      Project   = "dkmwebapp"
+      Project   = var.app_name
       Stack     = "foundation"
       ManagedBy = "terraform"
-      Repo      = "dkojo/dkmwebapp"
+      Repo      = var.github_repo
     }
   }
 }
@@ -54,32 +55,86 @@ provider "aws" {
 ### `variables.tf`
 
 ```hcl
-variable "app_name" {
-  type    = string
-  default = "dkmwebapp"
-}
-
-variable "domain_name" {
-  description = "Existing Route 53 zone (created by the portfolio repo)"
+variable "aws_region" {
+  description = "Region for every resource in this stack"
   type        = string
-  default     = "danielkojomegbenu.com"
+  default     = "us-east-1"
 }
 
-variable "app_hostname" {
-  type    = string
-  default = "app.danielkojomegbenu.com"
+variable "app_name" {
+  description = "Names the ECR repository and the Project tag"
+  type        = string
+  default     = "dkmwebapp"
+}
+
+variable "name_prefix" {
+  description = "Prefix for IAM names, e.g. eks-dkm gives the role eks-dkm-ci"
+  type        = string
+  default     = "eks-dkm"
+}
+
+variable "github_repo" {
+  description = "owner/name of the repository whose workflows build the app"
+  type        = string
 }
 
 variable "github_oidc_subject_prefix" {
-  description = "From Phase 0.5: gh api repos/dkojo/dkmwebapp/actions/oidc/customization/sub"
+  description = "From Phase 0.5: gh api repos/<owner>/<repo>/actions/oidc/customization/sub"
   type        = string
+}
+
+variable "ci_branches" {
+  description = "Branches whose workflow runs may push images. Pull requests never get AWS access."
+  type        = list(string)
+  default     = ["remodelled"]
+}
+
+variable "domain_name" {
+  description = "Existing Route 53 public zone the certificate is validated in"
+  type        = string
+}
+
+variable "app_hostname" {
+  description = "Hostname the certificate covers"
+  type        = string
+}
+
+variable "ecr_keep_images" {
+  description = "How many recent images ECR keeps"
+  type        = number
+  default     = 50
+}
+
+variable "ecr_untagged_expiry_days" {
+  description = "Days before untagged layers are deleted"
+  type        = number
+  default     = 14
 }
 ```
 
-### `terraform.tfvars`
+### `envs/prod.tfvars`: this environment's values
 
 ```hcl
+# Production settings for infra/foundation. Used by: scripts/tf.sh foundation <command>
+aws_region                 = "us-east-1"
+app_name                   = "dkmwebapp"
+name_prefix                = "eks-dkm"
+github_repo                = "dkojo/dkmwebapp"
 github_oidc_subject_prefix = "repo:dkojo@167027053/dkmwebapp@893369381" # immutable form, from Phase 0.5
+ci_branches                = ["remodelled"]
+domain_name                = "danielkojomegbenu.com"
+app_hostname               = "app.danielkojomegbenu.com"
+```
+
+### `envs/prod.backend.hcl`: where this environment's state lives
+
+```hcl
+# Where infra/foundation keeps its state for this environment. S3 native locking, no DynamoDB.
+bucket       = "danielkojomegbenu-tfstate"
+key          = "eks/foundation.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true
 ```
 
 ### `ecr.tf`
@@ -108,14 +163,14 @@ resource "aws_ecr_lifecycle_policy" "app" {
     rules = [
       {
         rulePriority = 1
-        description  = "Remove untagged layers after 14 days"
-        selection    = { tagStatus = "untagged", countType = "sinceImagePushed", countUnit = "days", countNumber = 14 }
+        description  = "Remove untagged layers after ${var.ecr_untagged_expiry_days} days"
+        selection    = { tagStatus = "untagged", countType = "sinceImagePushed", countUnit = "days", countNumber = var.ecr_untagged_expiry_days }
         action       = { type = "expire" }
       },
       {
         rulePriority = 2
-        description  = "Keep the 50 most recent images"
-        selection    = { tagStatus = "any", countType = "imageCountMoreThan", countNumber = 50 }
+        description  = "Keep the ${var.ecr_keep_images} most recent images"
+        selection    = { tagStatus = "any", countType = "imageCountMoreThan", countNumber = var.ecr_keep_images }
         action       = { type = "expire" }
       }
     ]
@@ -143,18 +198,18 @@ data "aws_iam_policy_document" "ci_trust" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
-    # Only workflow runs on remodelled may push images. Pull requests build and scan, but never touch AWS.
+    # Only workflow runs on the listed branches may push images. Pull requests build and scan, but never touch AWS.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["${var.github_oidc_subject_prefix}:ref:refs/heads/remodelled"]
+      values   = [for b in var.ci_branches : "${var.github_oidc_subject_prefix}:ref:refs/heads/${b}"]
     }
   }
 }
 
 resource "aws_iam_role" "ci" {
-  name               = "eks-dkm-ci"
-  description        = "GitHub Actions in dkojo/dkmwebapp pushes images to ECR"
+  name               = "${var.name_prefix}-ci"
+  description        = "GitHub Actions in ${var.github_repo} pushes images to ECR"
   assume_role_policy = data.aws_iam_policy_document.ci_trust.json
 }
 
@@ -176,7 +231,7 @@ data "aws_iam_policy_document" "ci" {
 }
 
 resource "aws_iam_role_policy" "ci" {
-  name   = "push-dkmwebapp"
+  name   = "push-${var.app_name}"
   role   = aws_iam_role.ci.id
   policy = data.aws_iam_policy_document.ci.json
 }
@@ -238,13 +293,66 @@ output "route53_zone_id" {
 
 ---
 
+### `scripts/tf.sh` (repo root): run any stack with any environment
+
+```bash
+#!/usr/bin/env bash
+# Run Terraform for one stack with one environment's settings and state.
+#
+#   scripts/tf.sh <foundation|platform> <terraform command> [args...]
+#   ENV=dev scripts/tf.sh platform plan        # ENV defaults to prod
+#
+# Each stack keeps per-environment files in infra/<stack>/envs/:
+#   <env>.tfvars        variable values (region, names, sizes...)
+#   <env>.backend.hcl   where that environment's state lives
+set -euo pipefail
+
+usage="usage: [ENV=<env>] scripts/tf.sh <foundation|platform> <command> [args...]"
+stack=${1:?$usage}; shift
+cmd=${1:?$usage}; shift
+env=${ENV:-prod}
+dir="$(cd "$(dirname "$0")/.." && pwd)/infra/$stack"
+
+for f in "envs/$env.tfvars" "envs/$env.backend.hcl"; do
+  [ -f "$dir/$f" ] || { echo "missing infra/$stack/$f" >&2; exit 1; }
+done
+
+tf() { terraform -chdir="$dir" "$@"; }
+
+# -reconfigure only switches which state file this folder points at; it never moves or copies state.
+init() { tf init -input=false -reconfigure -backend-config="envs/$env.backend.hcl" "$@"; }
+
+case "$cmd" in
+  init) init "$@"; exit ;;
+esac
+init >/dev/null
+
+case "$cmd" in
+  apply)
+    # A saved plan already contains its variables; Terraform refuses -var-file with one.
+    if [ $# -gt 0 ] && [[ "${!#}" == *.tfplan ]]; then tf apply "$@"; else tf apply -var-file="envs/$env.tfvars" "$@"; fi ;;
+  plan|destroy|import|refresh|console)
+    tf "$cmd" -var-file="envs/$env.tfvars" "$@" ;;
+  *)
+    tf "$cmd" "$@" ;;   # output, state, fmt, validate, show...
+esac
+```
+
+```bash
+git update-index --chmod=+x scripts/tf.sh   # executable on Linux/macOS too
+```
+
+`ENV` picks the environment (default `prod`): `ENV=dev scripts/tf.sh platform plan` reads
+`infra/platform/envs/dev.tfvars` and uses that environment's own state.
+
+---
+
 ## 2.2 Apply
 
 ```bash
-cd infra/foundation
-terraform init
-terraform fmt -check && terraform validate
-terraform plan -out=foundation.tfplan
+terraform -chdir=infra/foundation fmt -check -recursive
+scripts/tf.sh foundation validate
+scripts/tf.sh foundation plan -out=foundation.tfplan
 ```
 
 **Read the plan before applying.** Expect **7 to add, 0 to change, 0 to destroy**:
@@ -252,9 +360,8 @@ ECR repository + lifecycle policy, CI role + policy, certificate + 1 validation 
 ⚠️ If it shows anything to **change** or **destroy**, stop. Something already exists with the same name.
 
 ```bash
-terraform apply foundation.tfplan
-rm foundation.tfplan
-cd ../..
+scripts/tf.sh foundation apply foundation.tfplan
+rm infra/foundation/foundation.tfplan
 ```
 
 The certificate validates in 1–5 minutes, because your zone is already on Route 53.
@@ -264,9 +371,7 @@ The certificate validates in 1–5 minutes, because your zone is already on Rout
 ## 2.3 Save values for later phases
 
 ```bash
-cd infra/foundation
-terraform output -raw ecr_repository_url     # ‹account›.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp
-cd ../..
+scripts/tf.sh foundation output -raw ecr_repository_url     # ‹account›.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp
 ```
 
 The ECR URL contains your account ID. That's normal: it will appear in your GitOps values file, and AWS doesn't
@@ -288,7 +393,7 @@ aws iam get-role --role-name eks-dkm-ci \
   --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals."token.actions.githubusercontent.com:sub"' --output text
 # repo:dkojo@167027053/dkmwebapp@893369381:ref:refs/heads/remodelled
 
-terraform -chdir=infra/foundation plan    # No changes.
+scripts/tf.sh foundation plan    # No changes.
 ```
 
 ### If something goes wrong
@@ -302,7 +407,7 @@ terraform -chdir=infra/foundation plan    # No changes.
 ## Commit
 
 ```bash
-git add infra/foundation
+git add infra/foundation scripts/tf.sh
 git commit -m "Add Terraform foundation: ECR, CI push role, app certificate"
 git push
 ```

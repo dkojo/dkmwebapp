@@ -20,7 +20,7 @@ know about. They have to go **through Kubernetes first**, then Terraform destroy
 # End of a work session: remove what Kubernetes created in AWS, then destroy the platform stack, then check.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-aws eks update-kubeconfig --region us-east-1 --name dkm >/dev/null
+$(scripts/tf.sh platform output -raw configure_kubectl) >/dev/null   # honours ENV, like session-up.sh
 
 wait_until_empty() {   # wait_until_empty <description> <command that lists remaining things>
   echo "   waiting for $1…"
@@ -45,7 +45,7 @@ kubectl -n argocd delete application karpenter-nodes --ignore-not-found
 wait_until_empty "Karpenter nodes to terminate" "kubectl get nodeclaims -o name"
 
 echo "5/6 Destroy the platform stack"
-terraform -chdir=infra/platform destroy -auto-approve
+scripts/tf.sh platform destroy -auto-approve
 
 echo "6/6 Check for leftovers"
 scripts/check-leftovers.sh

@@ -177,7 +177,7 @@ gh api repos/dkojo/dkmwebapp/actions/oidc/customization/sub
 
 Write down the `sub_claim_prefix` value. This repo has `"use_immutable_subject": true`, like the portfolio
 repo, so the prefix carries the owner and repo IDs: `repo:dkojo@167027053/dkmwebapp@893369381`. Phase 2 puts
-it in `infra/foundation/terraform.tfvars`. The name part changes if the repo is renamed, so run this
+it in `infra/foundation/envs/prod.tfvars`. The name part changes if the repo is renamed, so run this
 **after** 0.4. (A repo with `"use_immutable_subject": false` would show plain `repo:dkojo/dkmwebapp`.)
 
 ---
