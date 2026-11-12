@@ -1,4 +1,4 @@
 image:
   repository: 870342665742.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp
-  digest: "sha256:3141de7a3cf2dd448e5b3ef9115502663d1c2303338c872d2d0d8d9b3ad18ef3"
-  version: "70da0b6"
+  digest: "sha256:b07c1b3d45f0a6591b912aa358329dea0d9a63a62ef7d6e9cd52746f49648cba"
+  version: "fbffa41"
