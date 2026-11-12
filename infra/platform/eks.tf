@@ -15,7 +15,14 @@ module "eks" {
   subnet_ids = module.vpc.private_subnets
 
   addons = {
-    vpc-cni                = { before_compute = true }
+    vpc-cni = {
+      before_compute = true
+      # Prefix delegation: each network interface slot holds a /28 (16 IPs) instead of one IP, so a t3.medium can
+      # run 110 pods instead of 17. Without it the system nodes filled up and DaemonSet pods couldn't start.
+      configuration_values = jsonencode({
+        env = { ENABLE_PREFIX_DELEGATION = "true", WARM_PREFIX_TARGET = "1" }
+      })
+    }
     eks-pod-identity-agent = { before_compute = true }
     kube-proxy             = {}
     coredns                = {}
@@ -35,6 +42,18 @@ module "eks" {
       labels = {
         "karpenter.sh/controller" = "true"
       }
+      # Tell the kubelet about the higher pod limit that prefix delegation allows
+      cloudinit_pre_nodeadm = [{
+        content_type = "application/node.eks.aws"
+        content      = <<-EOT
+          apiVersion: node.eks.aws/v1alpha1
+          kind: NodeConfig
+          spec:
+            kubelet:
+              config:
+                maxPods: ${var.max_pods_per_node}
+        EOT
+      }]
     }
   }
 

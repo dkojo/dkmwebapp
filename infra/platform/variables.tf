@@ -71,6 +71,12 @@ variable "system_node_count" {
   default     = { min = 2, max = 3, desired = 2 }
 }
 
+variable "max_pods_per_node" {
+  description = "Kubelet pod limit. 110 is the Kubernetes default and what prefix delegation supports on small instances."
+  type        = number
+  default     = 110
+}
+
 # ---- Database (Phase 5) ----
 variable "db_instance_class" {
   type    = string

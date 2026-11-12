@@ -13,6 +13,8 @@ spec:
   metadataOptions:
     httpTokens: required                  # IMDSv2 only
     httpPutResponseHopLimit: 2
+  kubelet:
+    maxPods: 110                          # matches the system nodes; the VPC CNI uses prefix delegation (infra/platform/eks.tf)
 ---
 apiVersion: karpenter.sh/v1
 kind: NodePool
