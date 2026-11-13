@@ -16,3 +16,4 @@ db_instance_class          = "db.t4g.micro"
 db_allocated_storage_gb    = 20
 db_multi_az                = false
 db_deletion_protection     = false
+waf_rate_limit             = 3000 # the Phase 10 load generator sends ~1,000 per 5 min from the NAT gateway IP
