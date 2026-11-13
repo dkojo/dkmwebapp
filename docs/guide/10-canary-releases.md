@@ -44,7 +44,7 @@ spec:
   source:
     repoURL: https://argoproj.github.io/argo-helm
     chart: argo-rollouts
-    targetRevision: ‹rollouts chart›
+    targetRevision: 2.43.12            # Argo Rollouts v1.10.2
     helm:
       valuesObject:
         controller:
@@ -145,7 +145,7 @@ spec:
   metrics:
     - name: success-rate
       interval: 30s
-      failureLimit: 1          # two bad readings in a row abort the release
+      failureLimit: 1          # a second failed reading aborts the release
       # No traffic yet (NaN) counts as a pass; the load generator in 10.4 guarantees traffic
       successCondition: len(result) == 0 || isNaN(result[0]) || result[0] >= 0.95
       provider:
@@ -218,8 +218,17 @@ git add gitops && git commit -m "Release dkmwebapp with Argo Rollouts canary and
 ```
 
 The switch from Deployment to Rollout is a one-time event: the first Rollout revision has no previous version
-to compare against, so it scales up fully without steps. Expect a few seconds of 503s while the old
-Deployment is pruned.
+to compare against, so it scales up fully without steps.
+
+⚠️ **This switch is not zero-downtime.** Measured on the first run: **50 of 516 requests got 503 over ~38
+seconds**. The Ingress moved to the new `dkmwebapp-stable`/`dkmwebapp-canary` target groups straight away, while
+the Rollout's pods were still starting and registering in them. For a demo, accept it once. For a real service,
+migrate in two steps: first a Rollout with `workloadRef` pointing at the existing Deployment and
+`scaleDown: progressively` (it starts its own pods next to the Deployment's, which keeps serving), and only
+when that Rollout is Healthy, switch the Ingress and remove the Deployment.
+
+`PruneLast=true` in `gitops/apps/dkmwebapp.yaml` makes Argo CD delete the old Deployment after everything
+else is applied and healthy, not first.
 
 ---
 
@@ -230,10 +239,14 @@ namespace and goes through the public URL. That way it exercises the ALB's weigh
 `gitops/apps/loadgen.yaml`: an Application for `gitops/loadgen/`, and in that folder:
 
 ```yaml
+# Steady traffic through the public URL, so the canary analysis always has requests to measure (and the ALB's
+# weights are exercised). It lives outside dkm: that namespace only admits signed dkmwebapp images (Phase 9).
 apiVersion: v1
 kind: Namespace
 metadata:
   name: loadgen
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -247,18 +260,22 @@ spec:
     metadata:
       labels: { app: loadgen }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 100, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: curl
-          image: curlimages/curl:8.17.0
+          image: curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93
           command: ["sh", "-c"]
           args:
             - while true; do curl -s -o /dev/null https://app.danielkojomegbenu.com/api/products; sleep 0.2; done
           resources:
             requests: { cpu: 10m, memory: 16Mi }
             limits: { memory: 32Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
 ```
 
-About five requests a second: enough for a meaningful success rate at 10% weight.
+About three requests a second (each `curl` takes ~0.1 s): enough for a meaningful success rate at 10% weight.
+The namespace enforces Pod Security `restricted` like `dkm`, so the pod runs as a non-root user with a read-only
+filesystem. All of it comes from one IP (the NAT gateway): Phase 11's WAF rate limit has to allow for it.
 
 ---
 
@@ -277,6 +294,10 @@ You'll see: `SetWeight 10` → `Paused` (3 min) → `SetWeight 50` → `Paused` 
 **AnalysisRun Successful**. In the AWS console (EC2 → Load Balancers → the dkm ALB → Listeners → HTTPS rule),
 the forward action shows the two target groups with weights 90/10, then 50/50.
 
+The first run: 10% at +2 min (after the canary pod started), 50% at +5 min, 100% at +8.5 min; 14 of 14 analysis
+readings passed; the new product appeared in `/api/products`. A probe sending 2 requests a second saw 2 of 636
+fail, both at the moment of promotion (see "If something goes wrong").
+
 ### A bad release is caught and rolled back
 
 Make 30% of requests fail, using the fault switch you built in Phase 1:
@@ -289,8 +310,21 @@ kubectl argo rollouts get rollout dkmwebapp -n dkm --watch
 ```
 
 Within about 2 minutes of reaching 10%: the AnalysisRun shows **Failed**, the rollout shows **✖ Degraded,
-RolloutAborted**, traffic goes back to 100% stable, and the canary pods scale down. **Only ~10% of requests
-during ~1–2 minutes were affected.** `DkmwebappHighErrorRate` may also fire in Slack.
+RolloutAborted**, traffic goes back to 100% stable, and the canary pods scale down. `DkmwebappHighErrorRate`
+may also fire in Slack.
+
+The first run, measured:
+
+```
+Status:   ✖ Degraded
+Message:  RolloutAborted: Rollout aborted update to revision 3: Background analysis phase error/failed:
+          Metric "success-rate" assessed Failed due to failed (2) > failureLimit (1)
+readings: (no canary traffic yet) → 1.0 → 0.80 → 0.78
+```
+
+Aborted **87 seconds** after reaching 10%. The probe saw 4 of 106 requests fail in that window (3.8%, close to
+the expected 10% × 30% = 3%), and none after. Why 1.0 first: the analysis starts when the weight changes, and
+the first 1-minute window holds almost no canary requests.
 
 Then fix forward, the GitOps way, through Git:
 
@@ -298,6 +332,9 @@ Then fix forward, the GitOps way, through Git:
 git revert --no-edit HEAD && git push
 kubectl argo rollouts get rollout dkmwebapp -n dkm --watch     # back to ✔ Healthy
 ```
+
+The revert makes the pod template identical to the stable ReplicaSet's, so Argo Rollouts goes straight back to
+Healthy with no new pods and no canary steps: 7 seconds after the push on the first run.
 
 📸 **Screenshot the aborted rollout** (terminal and the AnalysisRun in the Argo CD UI). It's the best single
 proof of the whole platform working.
@@ -310,6 +347,8 @@ proof of the whole platform working.
 | AnalysisRun errors `no data` / always NaN | The metrics have no `rollouts_pod_template_hash` label. Check `podTargetLabels` in the ServiceMonitor and that only the root Service has `metrics: "true"`. |
 | Bad release is **not** aborted | No traffic reaches the canary: check the loadgen pod is running and that `curl` succeeds from it. |
 | HPA shows `<unknown>` targets | Its `scaleTargetRef` must be the Rollout now (`templates/hpa.yaml` handles it when `rollout.enabled`). |
+| Rollout stays at step 0 with the canary pod Ready; `kubectl -n dkm get rollout dkmwebapp -o yaml` shows `ReplicaFailure … failed calling webhook "ivpol…kyverno"` | Kyverno was down at some point (its webhook **fails closed**), and the stable ReplicaSet is now in the controller's exponential back-off. Check `kubectl -n kyverno get pods`, then nudge it: `kubectl -n dkm annotate rs <stable-rs> resync=$(date +%s) --overwrite`. Seen on the first run when a system node briefly stopped reporting. |
+| A few 503s at the very end of a good release | The final step points the stable Service at the new pods; they must pass the ALB health check in the stable target group while it still carries 50% of traffic. Measured: 2 of 636 requests. Argo Rollouts' ALB **ping-pong** mode (`canary.pingPong`) avoids it: the target group serving traffic never has its pods swapped. |
 
 > ### 🛑 End of session
 > Same as Phase 8. Also delete `loadgen` along with `apps`, or it keeps calling a host that's about to vanish.

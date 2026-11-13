@@ -74,7 +74,7 @@ resource "aws_wafv2_web_acl" "dkm" {
     }
     statement {
       rate_based_statement {
-        limit              = var.waf_rate_limit # per IP per 5 minutes; the 0.2 s load generator sends ~1,500, see below
+        limit              = var.waf_rate_limit # per IP per 5 minutes; prod sets 3000 because the load generator (one NAT IP) sends ~1,000
         aggregate_key_type = "IP"
       }
     }
@@ -93,25 +93,53 @@ resource "aws_wafv2_web_acl" "dkm" {
 }
 ```
 
-⚠️ **The load generator from Phase 10 would trip the rate limit:** all its requests come from the NAT
-gateway's single IP. Either exempt that IP, or, simpler, set `waf_rate_limit = 3000` in `envs/prod.tfvars` while you run canary tests.
-Write down which one you chose in the README.
+⚠️ **The load generator from Phase 10 would trip the default limit (600):** it sends about 1,000 requests per
+5 minutes, all from the NAT gateway's single IP. This project sets it in `envs/prod.tfvars`:
+
+```hcl
+waf_rate_limit             = 3000 # the Phase 10 load generator sends ~1,000 per 5 min from the NAT gateway IP
+```
+
+A rate limit that a single real client at 3 requests a second can't reach is still useful against floods. The
+alternative is an IP set rule that exempts the NAT IP, which is one more thing to keep in sync each session.
+
+Review the plan before applying: it must only add.
 
 ```bash
-scripts/tf.sh platform plan     # expect: 1 to add
-scripts/tf.sh platform apply
+scripts/tf.sh platform plan -out=waf.tfplan     # expect: Plan: 1 to add, 0 to change, 0 to destroy
+scripts/tf.sh platform apply waf.tfplan
+aws wafv2 list-web-acls --scope REGIONAL --query "WebACLs[].Name"    # ["dkm-alb"]
 ```
+
+CI only scans infrastructure code when `app/` changes, so scan the new file yourself:
+`trivy config --severity HIGH,CRITICAL --skip-dirs infra/platform/.terraform --ignorefile .trivyignore infra/platform`.
 
 ## 11.3 Attach it to the ALB
 
-In `gitops/charts/dkmwebapp/templates/ingress.yaml`, add one annotation:
+Make the web ACL a chart value, so another environment (whose ACL is `<cluster>-alb`) can set its own, or none.
+In `gitops/charts/dkmwebapp/values.yaml`, under `ingress:`:
 
 ```yaml
-    alb.ingress.kubernetes.io/wafv2-acl-name: dkm-alb
+  wafAclName: ""          # Phase 11: the AWS WAF web ACL to attach (infra/platform/waf.tf names it <cluster>-alb)
+```
+
+In `templates/ingress.yaml`, after the `group.name` annotation:
+
+```yaml
+    {{- with .Values.ingress.wafAclName }}
+    alb.ingress.kubernetes.io/wafv2-acl-name: {{ . }}         # Phase 11: AWS WAF in front of the ALB
+    {{- end }}
+```
+
+And in `gitops/envs/prod/values.yaml`:
+
+```yaml
+ingress:
+  wafAclName: dkm-alb    # Phase 11: managed rules + per-IP rate limit (infra/platform/waf.tf)
 ```
 
 ```bash
-git commit -am "Protect dkmwebapp with AWS WAF managed rules and per-IP rate limiting" && git push
+git add gitops && git commit -m "Protect dkmwebapp with AWS WAF managed rules and per-IP rate limiting" && git push
 ```
 
 ---
@@ -129,6 +157,17 @@ curl -s -o /dev/null -w '%{http_code}\n' "https://app.danielkojomegbenu.com/api/
 curl -s -o /dev/null -w '%{http_code}\n' https://app.danielkojomegbenu.com/api/products
 # 200: normal traffic still passes
 ```
+
+The first run: the association appeared about 10 seconds after Argo CD synced. Every attack below got **403**,
+normal requests 200, and the load generator was never rate-limited:
+
+| Request | Result | Rule group |
+|---|---|---|
+| `?id=1' OR '1'='1` | 403 | SQLi |
+| `?q=1 UNION SELECT password FROM users` | 403 | SQLi |
+| `?q=<script>alert(1)</script>` | 403 | Common (XSS) |
+| `?file=../../../../etc/passwd` | 403 | Common (path traversal) |
+| header `X-Api-Version: ${jndi:ldap://…}` | 403 | Known bad inputs (Log4Shell) |
 
 In the console, **WAF & Shield → Web ACLs → dkm-alb → Overview**, you'll see the blocked request in
 "Sampled requests". That's a good screenshot.
