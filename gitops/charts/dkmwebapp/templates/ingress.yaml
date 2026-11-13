@@ -10,6 +10,9 @@ metadata:
     alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
     alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
     alb.ingress.kubernetes.io/group.name: dkm                # Phase 10's canary shares this ALB
+    {{- with .Values.ingress.wafAclName }}
+    alb.ingress.kubernetes.io/wafv2-acl-name: {{ . }}         # Phase 11: AWS WAF in front of the ALB
+    {{- end }}
 spec:
   ingressClassName: alb
   # The controller finds the ACM certificate for this host by itself (certificate discovery),

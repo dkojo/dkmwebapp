@@ -8,3 +8,6 @@ metrics:
 
 rollout:
   enabled: true          # Phase 10: Argo Rollouts canary (10% -> 50% -> 100%) with Prometheus analysis
+
+ingress:
+  wafAclName: dkm-alb    # Phase 11: managed rules + per-IP rate limit (infra/platform/waf.tf)

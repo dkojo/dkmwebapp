@@ -18,6 +18,7 @@ faultErrorRate: "0"     # Phase 10 raises this to prove rollback works
 
 ingress:
   host: app.danielkojomegbenu.com
+  wafAclName: ""          # Phase 11: the AWS WAF web ACL to attach (infra/platform/waf.tf names it <cluster>-alb)
 
 rollout:
   enabled: false        # Phase 10 switches the Deployment to an Argo Rollouts canary
