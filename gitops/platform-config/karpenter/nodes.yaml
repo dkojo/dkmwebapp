@@ -40,6 +40,9 @@ spec:
         - key: karpenter.k8s.aws/instance-size
           operator: In
           values: [medium, large]
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values: ["2"]                   # without this, the cheapest spot can be a 2006-era m1 (Xen, no Nitro)
       expireAfter: 168h                   # replace nodes weekly, so they always run a patched AMI
   limits:
     cpu: "8"                              # ⚠️ hard ceiling: Karpenter will never run more than 8 vCPUs in total
