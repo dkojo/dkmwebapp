@@ -9,7 +9,7 @@ spec:
   metrics:
     - name: success-rate
       interval: 30s
-      failureLimit: 1          # a second failed reading aborts the release
+      failureLimit: 1          # two bad readings in a row abort the release
       # No traffic yet (NaN) counts as a pass; the load generator in 10.4 guarantees traffic
       successCondition: len(result) == 0 || isNaN(result[0]) || result[0] >= 0.95
       provider:

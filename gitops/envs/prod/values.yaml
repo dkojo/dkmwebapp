@@ -8,5 +8,3 @@ metrics:
 
 rollout:
   enabled: true          # Phase 10: Argo Rollouts canary (10% -> 50% -> 100%) with Prometheus analysis
-
-faultErrorRate: "0.3"     # TEST: make 30% of requests fail, to prove the canary aborts (revert after)
