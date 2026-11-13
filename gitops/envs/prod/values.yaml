@@ -1,7 +1,7 @@
 image:
   repository: 870342665742.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp
-  digest: "sha256:e9ccc2504e1738dd95ef95bd8fb21c0e96353aa253bf593b648ba34d68632be6"
-  version: "37f08b4"
+  digest: "sha256:432551501f696060d98a351c611d10e8741f4d9395699171f8dc1653fc15b084"
+  version: "381dc28"
 
 metrics:
   serviceMonitor: true   # Phase 8: Prometheus scrapes /actuator/prometheus, alert rules on
