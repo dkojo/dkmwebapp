@@ -91,7 +91,7 @@ canary's requests succeed. Argo CD posts the deployment to Slack.
 | WAF | SQL injection (2 forms), XSS, path traversal and a Log4Shell header: all 403; normal requests 200 |
 | Traces | 87 of 87 traces are real requests after dropping health checks at the collector |
 | Platform from nothing | ~20 min (`scripts/session-up.sh`) |
-| Cost | ~$0.30/hour while running; under $1/month when torn down |
+| Cost | ~$0.34/hour while running; under $1/month when torn down |
 
 What didn't go perfectly, and is written up in the guide:
 
@@ -102,6 +102,13 @@ What didn't go perfectly, and is written up in the guide:
 - **2 requests failed at the very end of a good canary** (2 of 636). Promotion points the stable Service at the
   new pods, which must then pass the ALB health check in the stable target group while it still carries 50% of
   traffic. Argo Rollouts' ALB ping-pong mode avoids this; it's the next change.
+- **Losing one system node took down the other** (second run). App pods had scaled onto a system node, filled
+  its memory and its kubelet stopped; its 22 pods, Argo CD's controller among them, moved to the other system node,
+  which then failed the same way. Meanwhile the HPA reached 6 pods, and 6 × Hikari's default pool of 10 is more
+  connections than the db.t4g.micro allows, so new pods crash-looped on `Too many connections`. The app kept
+  serving from the healthy pods. Recovery was by hand: add a node first, then terminate the dead ones and
+  force-delete their pods. The fix is in Git: three system nodes, app pods only on Karpenter nodes, a pool of 5
+  per pod, and a slower HPA scale-up.
 - **Kyverno's webhook fails closed.** When a system node briefly stopped reporting, Kyverno's single replica
   was rescheduled, and for that minute the cluster couldn't create app pods. In production: three replicas
   and a PodDisruptionBudget.
@@ -124,13 +131,13 @@ scripts/check-leftovers.sh  # any time: lists anything billable still running
 | Resource | Rate |
 |---|---|
 | EKS control plane | $0.10/h |
-| 2 × t3.medium system nodes | ~$0.083/h |
+| 3 × t3.medium system nodes | ~$0.125/h |
 | NAT gateway | ~$0.045/h |
 | Application Load Balancer | ~$0.025/h |
 | Karpenter spot nodes | ~$0.01–0.03/h |
 | RDS db.t4g.micro | ~$0.016/h |
 | Public IPv4, EBS, WAF | ~$0.03/h |
-| **Total** | **~$0.30/h**, about $2.50 for an 8-hour session |
+| **Total** | **~$0.34/h**, about $2.80 for an 8-hour session |
 
 The platform exists only during work sessions. What stays between sessions (ECR, the certificate, the
 Terraform state bucket, two Secrets Manager secrets) costs under $1/month.
@@ -142,8 +149,8 @@ Terraform state bucket, two Secrets Manager secrets) costs under $1/month.
 - **Separate AWS accounts** for dev, staging and prod, with promotion by pull request in the GitOps repo.
 - **A private EKS API endpoint** behind a VPN or SSM, instead of a public endpoint with an IP allow-list.
 - **Kyverno with three replicas** and a PodDisruptionBudget, because its webhook fails closed (see above).
-- **Bigger or more system nodes.** Two t3.medium nodes carry Argo CD, Kyverno, the observability stack and
-  the app; one sat at 92% memory.
+- **Bigger system nodes, and HA for the platform.** Three t3.medium nodes carry Argo CD, Kyverno and the
+  observability stack at 65–80% memory, each as a single replica; production wants room for a node to fail.
 - **Long-term metrics and logs** in S3 (Thanos or Mimir, Loki in S3 mode) instead of 2-day volumes.
 - **Terraform in CI**: plan on pull request, apply on merge, with cost estimates on the PR.
 - **CloudFront in front** if the service served static assets or global users.

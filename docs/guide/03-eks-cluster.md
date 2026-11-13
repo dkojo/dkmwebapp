@@ -145,7 +145,7 @@ variable "system_node_instance_types" {
 variable "system_node_count" {
   description = "Size of the fixed system node group. Karpenter adds everything else on demand."
   type        = object({ min = number, max = number, desired = number })
-  default     = { min = 2, max = 3, desired = 2 }
+  default     = { min = 3, max = 4, desired = 3 }   # 2 was too few: losing one overloaded the other (Phase 10)
 }
 
 variable "max_pods_per_node" {
@@ -206,7 +206,7 @@ vpc_cidr                   = "10.0.0.0/16"
 az_count                   = 3
 single_nat_gateway         = true
 system_node_instance_types = ["t3.medium"]
-system_node_count          = { min = 2, max = 3, desired = 2 }
+system_node_count          = { min = 3, max = 4, desired = 3 }
 db_instance_class          = "db.t4g.micro"
 db_allocated_storage_gb    = 20
 db_multi_az                = false

@@ -60,13 +60,13 @@ check the [AWS pricing pages](https://aws.amazon.com/pricing/) if you want exact
 |---|---|---|---|
 | EKS control plane | $0.10/h | $0.80 | $73 |
 | NAT gateway (+ data) | ~$0.045/h | $0.36 | $33 |
-| 2 × t3.medium system nodes | ~$0.083/h | $0.67 | $61 |
+| 3 × t3.medium system nodes | ~$0.125/h | $1.00 | $91 |
 | Karpenter spot nodes (1–2 small) | ~$0.01–0.03/h | $0.15 | $20 |
 | Application Load Balancer | ~$0.025/h | $0.20 | $18 |
 | RDS db.t4g.micro (single-AZ) | ~$0.016/h | $0.13 | $12 |
 | Public IPv4 addresses (NAT, ALB) | $0.005/h each | $0.12 | $11 |
 | EBS volumes (Prometheus, Loki) | ~$0.10/GB-month | ~$0 | $4 |
-| **Total** | **~$0.30/h** | **~$2.50** | **~$230** |
+| **Total** | **~$0.34/h** | **~$2.80** | **~$260** |
 
 **So the rule for the whole project is: build in sessions, destroy at the end of every session.**
 The infrastructure is split so that's painless:

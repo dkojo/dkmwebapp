@@ -42,16 +42,18 @@ image:
   digest: ""            # set by CI
   version: ""           # set by CI
 
-replicas: 2
-
 resources:
   requests: { cpu: 250m, memory: 512Mi }
   limits: { memory: 768Mi }   # no CPU limit: avoids throttling; requests drive scheduling
 
-autoscaling:
+autoscaling:             # the HPA owns the replica count: change minReplicas, never set replicas in Git
   minReplicas: 2
   maxReplicas: 6
   targetCPU: 70
+
+# Connections per pod. RDS db.t4g.micro allows 60; Hikari's default of 10 x 6 pods + RDS's own 3 = 63 is over.
+# 5 x (6 pods + a canary) = 35 leaves room.
+dbPoolSize: 5
 
 faultErrorRate: "0"     # Phase 10 raises this to prove rollback works
 
@@ -82,6 +84,14 @@ spec:
       topologyKey: topology.kubernetes.io/zone
       whenUnsatisfiable: ScheduleAnyway
       labelSelector: { matchLabels: { app: dkmwebapp } }
+  # Only on Karpenter's nodes, never the system nodes: an app scale-out once filled a system node's memory,
+  # its kubelet died, and Argo CD, metrics-server and Prometheus went down with it.
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - { key: karpenter.sh/nodepool, operator: Exists }
   containers:
     - name: dkmwebapp
       image: "{{ .Values.image.repository }}@{{ required "image.digest is set by CI" .Values.image.digest }}"
@@ -90,6 +100,7 @@ spec:
       env:
         - { name: APP_VERSION, value: {{ .Values.image.version | quote }} }
         - { name: FAULT_ERROR_RATE, value: {{ .Values.faultErrorRate | quote }} }
+        - { name: SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, value: {{ .Values.dbPoolSize | quote }} }
       envFrom:
         - secretRef: { name: dkm-db }       # DB_HOST, DB_PORT, DB_NAME, DB_USERNAME, DB_PASSWORD
       resources: {{- toYaml .Values.resources | nindent 8 }}
@@ -235,6 +246,11 @@ spec:
       resource:
         name: cpu
         target: { type: Utilization, averageUtilization: {{ .Values.autoscaling.targetCPU }} }
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60     # a JVM's startup CPU spike lasts ~30 s; don't scale on it
+      policies:
+        - { type: Pods, value: 1, periodSeconds: 60 }   # at most one new pod a minute
 ```
 
 ### `templates/pdb.yaml`

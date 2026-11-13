@@ -12,6 +12,14 @@ spec:
       topologyKey: topology.kubernetes.io/zone
       whenUnsatisfiable: ScheduleAnyway
       labelSelector: { matchLabels: { app: dkmwebapp } }
+  # Only on Karpenter's nodes, never the system nodes: an app scale-out once filled a system node's memory,
+  # its kubelet died, and Argo CD, metrics-server and Prometheus went down with it.
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - { key: karpenter.sh/nodepool, operator: Exists }
   containers:
     - name: dkmwebapp
       image: "{{ .Values.image.repository }}@{{ required "image.digest is set by CI" .Values.image.digest }}"

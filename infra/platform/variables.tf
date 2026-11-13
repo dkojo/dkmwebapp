@@ -68,7 +68,7 @@ variable "system_node_instance_types" {
 variable "system_node_count" {
   description = "Size of the fixed system node group. Karpenter adds everything else on demand."
   type        = object({ min = number, max = number, desired = number })
-  default     = { min = 2, max = 3, desired = 2 }
+  default     = { min = 3, max = 4, desired = 3 }
 }
 
 variable "max_pods_per_node" {
