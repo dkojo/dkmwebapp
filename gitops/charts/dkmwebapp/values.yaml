@@ -3,7 +3,7 @@ image:
   digest: ""            # set by CI
   version: ""           # set by CI
 
-replicas: 2
+replicas: 4
 
 resources:
   requests: { cpu: 250m, memory: 512Mi }
