@@ -3,16 +3,18 @@ image:
   digest: ""            # set by CI
   version: ""           # set by CI
 
-replicas: 2
-
 resources:
   requests: { cpu: 250m, memory: 512Mi }
   limits: { memory: 768Mi }   # no CPU limit: avoids throttling; requests drive scheduling
 
-autoscaling:
+autoscaling:             # the HPA owns the replica count: change minReplicas, never set replicas in Git
   minReplicas: 2
   maxReplicas: 6
   targetCPU: 70
+
+# Connections per pod. RDS db.t4g.micro allows 60; Hikari's default of 10 x 6 pods + RDS's own 3 = 63 is over.
+# 5 x (6 pods + a canary) = 35 leaves room.
+dbPoolSize: 5
 
 faultErrorRate: "0"     # Phase 10 raises this to prove rollback works
 

@@ -20,6 +20,7 @@ spec:
       env:
         - { name: APP_VERSION, value: {{ .Values.image.version | quote }} }
         - { name: FAULT_ERROR_RATE, value: {{ .Values.faultErrorRate | quote }} }
+        - { name: SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, value: {{ .Values.dbPoolSize | quote }} }
         - name: NODE_IP
           valueFrom: { fieldRef: { fieldPath: status.hostIP } }
         - { name: JAVA_TOOL_OPTIONS, value: "-javaagent:/app/otel.jar" }
