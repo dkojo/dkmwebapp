@@ -3,7 +3,7 @@
 # $BUILDPLATFORM: Maven always runs natively, even when CI builds the arm64 image. The JAR is the same on
 # every architecture, so only the small runtime stage below is built per architecture. Without this, the
 # arm64 build runs Maven under emulation and takes about 10 minutes instead of 1.
-FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-26 AS build
+FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /src
 COPY pom.xml mvnw ./
 COPY .mvn .mvn
