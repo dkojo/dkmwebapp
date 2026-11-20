@@ -1,0 +1,7 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dkmwebapp
+spec:
+  minAvailable: 1      # Karpenter consolidation never takes the last pod down
+  selector: { matchLabels: { app: dkmwebapp } }

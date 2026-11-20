@@ -170,6 +170,7 @@ jobs:
         with:
           scan-type: config
           scan-ref: .
+          skip-dirs: legacy-2024              # archived 2024 code, never deployed; accepted findings are in .trivyignore
           severity: CRITICAL,HIGH
           exit-code: '1'
 
@@ -256,10 +257,68 @@ are none anywhere in this repo. The workflow still masks the ID in logs (`mask-a
 
 ---
 
+### Before the first run: make every gate pass on purpose
+
+Run the same scanners locally first. A red first run teaches nothing; a finding you've read and decided on does.
+
+```bash
+# IaC: what the "Trivy IaC scan" step will see (skip your local module downloads, which CI doesn't have)
+trivy config --severity CRITICAL,HIGH --exit-code 1 --skip-dirs legacy-2024 \
+  --skip-dirs infra/platform/.terraform --skip-dirs infra/foundation/.terraform .
+
+# Image: what the "Trivy image scan" step will see
+docker build -t dkmwebapp:scan app
+trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 dkmwebapp:scan
+
+# Secrets in the whole history (the workflow's manual trigger scans all of it)
+MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W):/repo" ghcr.io/gitleaks/gitleaks:latest git /repo --redact -v
+```
+
+For each finding, decide: **fix it**, or **accept it with a written reason**. The first run of this guide found:
+
+| Finding | Decision |
+|---|---|
+| `app/Dockerfile`: image user is root (DS-0002) | **Fixed**: `USER 65532:65532` (Phase 1). Distroless `:nonroot` already ran as 65532, but scanners can't see that from the Dockerfile. |
+| `ecr.tf`: mutable tags (AWS-0031) | **Accepted**: Cosign stores signatures as tags; deploys pin the digest. |
+| EKS module: public API endpoint (AWS-0040) | **Accepted**: restricted to your /32. Production: private endpoint. |
+| EKS module: unrestricted node egress (AWS-0104) | **Accepted**: nodes must reach ECR and AWS APIs; egress filtering is a firewall's job. |
+| `legacy-2024/`: 30 findings | **Excluded** from the scan (`skip-dirs`): archived, never deployed. |
+| Gitleaks: two `generic-api-key` hits in 2024 commits | **False positives**: a Secrets Manager ARN (an address, not a credential). Exact fingerprints in `.gitleaksignore`. |
+
+`.trivyignore` (repo root):
+
+```
+# Accepted Trivy findings. Each one is deliberate; the reason is next to it.
+# Re-check this list whenever the architecture changes.
+
+# ECR tags are mutable on purpose: Cosign stores signatures as tags (sha256-<digest>.sig), and deploys pin
+# image@sha256:<digest>, which can never point at different content. (infra/foundation/ecr.tf)
+AVD-AWS-0031
+
+# EKS API endpoint is public but restricted to the admin's /32 (admin_cidrs). Production: private endpoint
+# reached through a VPN or SSM. (terraform-aws-modules/eks)
+AVD-AWS-0040
+
+# Node security group allows all egress: nodes must reach ECR, AWS APIs and image registries. Egress
+# filtering belongs in a network firewall or proxy, not in node security groups. (terraform-aws-modules/eks)
+AVD-AWS-0104
+```
+
+`.gitleaksignore` (repo root) lists **exact fingerprints**, never whole rules or files, so a new leak still fails:
+
+```
+# False positives, reviewed ‹date›: Secrets Manager ARNs (identifiers, not credentials) in 2024 commits.
+‹commit›:terraform/rds/main.tf:generic-api-key:6
+```
+
+⚠️ An ignore file is a list of decisions, not a mute button. Each line needs a reason a reviewer would accept.
+
+---
+
 ## 6.4 Run it
 
 ```bash
-git add .github gitops/envs
+git add .github gitops/envs app/Dockerfile .trivyignore .gitleaksignore
 git commit -m "Add CI pipeline: scan, build, sign, publish and bump digest"
 git push
 gh run watch

@@ -19,3 +19,6 @@ target/
 # Local env files
 .env
 *.local
+
+# Per-person Terraform values, e.g. your home IP (scripts/tf.sh loads envs/<env>.local.tfvars)
+*.local.tfvars

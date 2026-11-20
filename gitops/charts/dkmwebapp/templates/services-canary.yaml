@@ -1,0 +1,14 @@
+{{- if .Values.rollout.enabled }}
+{{- range $role := list "stable" "canary" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dkmwebapp-{{ $role }}
+  labels: { app: dkmwebapp }
+spec:
+  selector: { app: dkmwebapp }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+{{- end }}
+{{- end }}

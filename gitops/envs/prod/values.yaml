@@ -1,0 +1,13 @@
+image:
+  repository: 870342665742.dkr.ecr.us-east-1.amazonaws.com/dkmwebapp
+  digest: "sha256:432551501f696060d98a351c611d10e8741f4d9395699171f8dc1653fc15b084"
+  version: "381dc28"
+
+metrics:
+  serviceMonitor: true   # Phase 8: Prometheus scrapes /actuator/prometheus, alert rules on
+
+rollout:
+  enabled: true          # Phase 10: Argo Rollouts canary (10% -> 50% -> 100%) with Prometheus analysis
+
+ingress:
+  wafAclName: dkm-alb    # Phase 11: managed rules + per-IP rate limit (infra/platform/waf.tf)

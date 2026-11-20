@@ -1,0 +1,29 @@
+image:
+  repository: ""        # set in gitops/envs/prod/values.yaml
+  digest: ""            # set by CI
+  version: ""           # set by CI
+
+resources:
+  requests: { cpu: 250m, memory: 512Mi }
+  limits: { memory: 768Mi }   # no CPU limit: avoids throttling; requests drive scheduling
+
+autoscaling:             # the HPA owns the replica count: change minReplicas, never set replicas in Git
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPU: 70
+
+# Connections per pod. RDS db.t4g.micro allows 60; Hikari's default of 10 x 6 pods + RDS's own 3 = 63 is over.
+# 5 x (6 pods + a canary) = 35 leaves room.
+dbPoolSize: 5
+
+faultErrorRate: "0"     # Phase 10 raises this to prove rollback works
+
+ingress:
+  host: app.danielkojomegbenu.com
+  wafAclName: ""          # Phase 11: the AWS WAF web ACL to attach (infra/platform/waf.tf names it <cluster>-alb)
+
+rollout:
+  enabled: false        # Phase 10 switches the Deployment to an Argo Rollouts canary
+
+metrics:
+  serviceMonitor: false # Phase 8 turns this on once Prometheus exists

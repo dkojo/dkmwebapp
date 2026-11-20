@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aws-load-balancer-controller
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  source:
+    repoURL: https://aws.github.io/eks-charts
+    chart: aws-load-balancer-controller
+    targetRevision: 3.6.2
+    helm:
+      valuesObject:
+        clusterName: dkm
+        region: us-east-1
+        # Find the VPC by its Name tag. The nodes' IMDS hop limit is 1 (pods can't read instance metadata),
+        # and a tag lookup keeps working when the VPC is recreated each session, unlike a hard-coded vpcId.
+        vpcTags:
+          Name: dkm
+        replicaCount: 1
+        serviceAccount:
+          name: aws-load-balancer-controller   # matches the Pod Identity association from Phase 3
+        nodeSelector:
+          karpenter.sh/controller: "true"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]
+    retry: { limit: 10, backoff: { duration: 15s, factor: 2, maxDuration: 5m } }

@@ -1,0 +1,37 @@
+global:
+  nodeSelector:
+    karpenter.sh/controller: "true"     # keep Argo CD on the fixed system nodes
+
+configs:
+  params:
+    server.insecure: true               # you reach the UI through kubectl port-forward, not the internet
+  cm:
+    timeout.reconciliation: 60s         # check Git every minute
+
+dex:
+  enabled: false                        # no SSO needed for a personal cluster
+
+notifications:
+  enabled: true
+  secret:
+    create: false                       # External Secrets creates argocd-notifications-secret (Phase 7)
+  notifiers:
+    # Bot token in a header (see argocd-notifications-secret.yaml for why not a webhook)
+    service.slack: |
+      token: $slack-token
+  templates:
+    template.app-deployed: |
+      message: ":rocket: *{{.app.metadata.name}}* is live at Git revision {{ index .app.status.sync.revisions 0 | trunc 7 }} and Healthy"
+  triggers:
+    # Multi-source apps (chart + values) record their commits in .revisions (a list); .revision stays empty.
+    trigger.on-deployed: |
+      - description: Synced and healthy after a new revision
+        oncePer: app.status.operationState.syncResult.revisions
+        send: [app-deployed]
+        when: app.status.operationState != nil and app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
+
+# Phase 8: let Prometheus scrape Argo CD, for the DORA deployment-frequency panel (argocd_app_sync_total)
+controller:
+  metrics:
+    enabled: true
+    serviceMonitor: { enabled: true }

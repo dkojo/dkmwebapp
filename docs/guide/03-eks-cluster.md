@@ -11,7 +11,7 @@ and destroy each session.
 ## 3.1 Pick the Kubernetes version
 
 ```bash
-aws eks describe-cluster-versions --query "clusterVersions[?versionStatus=='STANDARD_SUPPORT'].clusterVersion" --output text
+aws eks describe-cluster-versions --query "clusterVersions[?status=='STANDARD_SUPPORT'].clusterVersion" --output text
 # e.g. 1.33  1.34  1.35  → use the newest one
 ```
 
@@ -21,11 +21,20 @@ aws eks describe-cluster-versions --query "clusterVersions[?versionStatus=='STAN
 
 The cluster's API endpoint will only accept connections from your IP:
 
+It goes in a separate file that git ignores (`*.local.tfvars` in `.gitignore`): this repo is public, and your home
+IP is both personal and the one thing standing between the internet and your cluster's API.
+
 ```bash
-curl -s https://checkip.amazonaws.com    # e.g. 203.0.113.25
+cat > infra/platform/envs/prod.local.tfvars <<EOF
+# Not committed (*.local.tfvars is git-ignored). Your public IP, from step 3.2.
+admin_cidrs = ["$(curl -s https://checkip.amazonaws.com)/32"]
+EOF
+git check-ignore infra/platform/envs/prod.local.tfvars   # must print the path; if not, add *.local.tfvars to .gitignore
 ```
 
-If your home IP changes later, `kubectl` will time out. Update `admin_cidrs` in `envs/prod.tfvars` and run `scripts/tf.sh platform apply` again.
+`scripts/tf.sh` adds `envs/<env>.local.tfvars` to every plan and apply when the file exists.
+
+If your home IP changes later, `kubectl` will time out. Update `admin_cidrs` in `envs/prod.local.tfvars` and run `scripts/tf.sh platform apply` again.
 
 ---
 
@@ -136,7 +145,13 @@ variable "system_node_instance_types" {
 variable "system_node_count" {
   description = "Size of the fixed system node group. Karpenter adds everything else on demand."
   type        = object({ min = number, max = number, desired = number })
-  default     = { min = 2, max = 3, desired = 2 }
+  default     = { min = 3, max = 4, desired = 3 }   # 2 was too few: losing one overloaded the other (Phase 10)
+}
+
+variable "max_pods_per_node" {
+  description = "Kubelet pod limit. 110 is the Kubernetes default and what prefix delegation supports on small instances."
+  type        = number
+  default     = 110
 }
 
 # ---- Database (Phase 5) ----
@@ -183,15 +198,15 @@ environment        = "prod"
 aws_region         = "us-east-1"
 cluster_name       = "dkm"
 domain_name        = "danielkojomegbenu.com"
-kubernetes_version = "‹from 3.1, e.g. 1.35›"
-admin_cidrs        = ["‹your IP›/32"]
+kubernetes_version = "‹from 3.1, e.g. 1.37›"
+# admin_cidrs (your IP) lives in envs/prod.local.tfvars, which git ignores. See step 3.2.
 
 # Sizes. Everything below matches the defaults; it's listed so the cost drivers are in one place.
 vpc_cidr                   = "10.0.0.0/16"
 az_count                   = 3
 single_nat_gateway         = true
 system_node_instance_types = ["t3.medium"]
-system_node_count          = { min = 2, max = 3, desired = 2 }
+system_node_count          = { min = 3, max = 4, desired = 3 }
 db_instance_class          = "db.t4g.micro"
 db_allocated_storage_gb    = 20
 db_multi_az                = false
@@ -222,8 +237,8 @@ environment        = "dev"
 aws_region         = "us-east-1"
 cluster_name       = "dkm-dev"
 domain_name        = "danielkojomegbenu.com"
-kubernetes_version = "‹from 3.1, e.g. 1.35›"
-admin_cidrs        = ["‹your IP›/32"]
+kubernetes_version = "‹from 3.1, e.g. 1.37›"
+# admin_cidrs (your IP) lives in envs/dev.local.tfvars, which git ignores. See step 3.2.
 
 vpc_cidr                   = "10.1.0.0/16"
 az_count                   = 2
@@ -303,7 +318,14 @@ module "eks" {
   subnet_ids = module.vpc.private_subnets
 
   addons = {
-    vpc-cni                = { before_compute = true }
+    vpc-cni = {
+      before_compute = true
+      # Prefix delegation: each network interface slot holds a /28 (16 IPs) instead of one IP, so a t3.medium can
+      # run 110 pods instead of 17. Without it the system nodes filled up and DaemonSet pods couldn't start.
+      configuration_values = jsonencode({
+        env = { ENABLE_PREFIX_DELEGATION = "true", WARM_PREFIX_TARGET = "1" }
+      })
+    }
     eks-pod-identity-agent = { before_compute = true }
     kube-proxy             = {}
     coredns                = {}
@@ -323,6 +345,18 @@ module "eks" {
       labels = {
         "karpenter.sh/controller" = "true"
       }
+      # Tell the kubelet about the higher pod limit that prefix delegation allows
+      cloudinit_pre_nodeadm = [{
+        content_type = "application/node.eks.aws"
+        content      = <<-EOT
+          apiVersion: node.eks.aws/v1alpha1
+          kind: NodeConfig
+          spec:
+            kubelet:
+              config:
+                maxPods: ${var.max_pods_per_node}
+        EOT
+      }]
     }
   }
 
@@ -463,7 +497,7 @@ scripts/tf.sh platform validate
 scripts/tf.sh platform plan -out=platform.tfplan
 ```
 
-Expect roughly **80–100 resources to add** (the modules create many small pieces) and **0 to change or destroy**.
+Expect roughly **110 resources to add** (the modules create many small pieces) and **0 to change or destroy**.
 Check that the list includes `module.eks.aws_eks_cluster.this[0]`, one NAT gateway and the node group.
 
 ```bash
@@ -496,7 +530,7 @@ kubectl auth can-i '*' '*' --all-namespaces    # yes
 
 | Symptom | Fix |
 |---|---|
-| `kubectl` hangs or times out | Your IP changed. Update `admin_cidrs` in `envs/prod.tfvars`, then `scripts/tf.sh platform apply`. |
+| `kubectl` hangs or times out | Your IP changed. Update `admin_cidrs` in `envs/prod.local.tfvars`, then `scripts/tf.sh platform apply`. |
 | `You must be logged in to the server (Unauthorized)` | The kubeconfig was made by a different AWS identity. Run `aws sts get-caller-identity`, then the `configure_kubectl` command again. |
 | Apply fails on an add-on with `CREATE_FAILED … no nodes` | Rare timing issue. Run `scripts/tf.sh platform apply` again. |
 | `metrics-server` add-on not found | Check that it's offered for your version: `aws eks describe-addon-versions --addon-name metrics-server --kubernetes-version ‹v›`. If not, remove it from `addons`; Phase 4 can install it with Argo CD. |

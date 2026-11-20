@@ -1,0 +1,5 @@
+apiVersion: v2
+name: dkmwebapp
+description: dkmwebapp on EKS
+type: application
+version: 0.1.0

@@ -1,0 +1,32 @@
+# Steady traffic through the public URL, so the canary analysis always has requests to measure (and the ALB's
+# weights are exercised). It lives outside dkm: that namespace only admits signed dkmwebapp images (Phase 9).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: loadgen
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: loadgen
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: loadgen } }
+  template:
+    metadata:
+      labels: { app: loadgen }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 100, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: curl
+          image: curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93
+          command: ["sh", "-c"]
+          args:
+            - while true; do curl -s -o /dev/null https://app.danielkojomegbenu.com/api/products; sleep 0.2; done
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }

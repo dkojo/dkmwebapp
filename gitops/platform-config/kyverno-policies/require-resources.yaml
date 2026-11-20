@@ -1,0 +1,20 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-requests-and-limits
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchLabels: { kubernetes.io/metadata.name: dkm }
+  validations:
+    - expression: >-
+        object.spec.containers.all(c,
+          has(c.resources) && has(c.resources.requests) && has(c.resources.limits) &&
+          'cpu' in c.resources.requests && 'memory' in c.resources.requests && 'memory' in c.resources.limits)
+      message: "Containers need cpu and memory requests, and a memory limit, so Karpenter can size nodes."

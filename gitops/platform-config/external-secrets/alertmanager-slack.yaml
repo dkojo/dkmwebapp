@@ -1,0 +1,13 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: alertmanager-slack
+  namespace: observability
+spec:
+  refreshInterval: 1h
+  secretStoreRef: { kind: ClusterSecretStore, name: aws-secrets-manager }
+  target: { name: alertmanager-slack }
+  data:
+    # The same chat:write-only bot token Argo CD uses (Phase 7)
+    - secretKey: token
+      remoteRef: { key: dkm/slack-bot1, property: token }

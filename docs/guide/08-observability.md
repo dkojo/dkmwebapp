@@ -43,13 +43,8 @@ volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true
 ```
 
-Remove the default flag from gp2, so there's only one default:
-
-```bash
-kubectl annotate storageclass gp2 storageclass.kubernetes.io/is-default-class=false --overwrite
-```
-
-(Add this line to `session-up.sh` after `update-kubeconfig`, since the cluster is new each session.)
+Since EKS 1.30, new clusters have **no** default storage class (`gp2` exists but isn't marked default), so
+`gp3` becomes the only default with no further steps. Check: `kubectl get storageclass`.
 
 `gitops/platform/storage.yaml`: an Application for the folder, in the same shape as `karpenter-nodes`
 (path `gitops/platform-config/storage`, no namespace needed).
@@ -94,7 +89,7 @@ spec:
   source:
     repoURL: https://prometheus-community.github.io/helm-charts
     chart: kube-prometheus-stack
-    targetRevision: ‹kps chart›
+    targetRevision: 93.2.2
     helm:
       valuesObject:
         prometheus:
@@ -128,7 +123,14 @@ spec:
               - name: "null"
               - name: slack
                 slack_configs:
-                  - api_url_file: /etc/alertmanager/secrets/alertmanager-slack/url
+                  # Bot token in a header, not an incoming webhook: a webhook's URL is its credential, and
+                  # URLs end up in logs (Phase 7). chat.postMessage needs the channel named explicitly.
+                  - api_url: https://slack.com/api/chat.postMessage
+                    channel: "#deployments"
+                    http_config:
+                      authorization:
+                        type: Bearer
+                        credentials_file: /etc/alertmanager/secrets/alertmanager-slack/token
                     send_resolved: true
                     title: '{{ if eq .Status "firing" }}🔥{{ else }}✅{{ end }} {{ .CommonLabels.alertname }}'
                     text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
@@ -267,7 +269,7 @@ spec:
   source:
     repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
     chart: opentelemetry-collector
-    targetRevision: ‹otel chart›
+    targetRevision: 0.178.3
     helm:
       valuesObject:
         mode: daemonset
@@ -279,7 +281,20 @@ spec:
         ports:
           otlp: { enabled: true, hostPort: 4317 }        # pods send traces to their own node's collector
           otlp-http: { enabled: true, hostPort: 4318 }
+          # Unused protocols: don't open them on every node
+          jaeger-compact: { enabled: false }
+          jaeger-thrift: { enabled: false }
+          jaeger-grpc: { enabled: false }
+          zipkin: { enabled: false }
         config:
+          processors:
+            # Kubernetes probes and the ALB health check hit /actuator every few seconds. Their spans were 40% of
+            # all traces and buried real requests, so drop them before they reach Tempo.
+            filter/drop-health:
+              error_mode: ignore
+              traces:
+                span:
+                  - 'IsMatch(attributes["url.path"], "^/actuator")'
           exporters:
             otlphttp/loki:
               endpoint: http://loki.observability:3100/otlp
@@ -290,11 +305,11 @@ spec:
             pipelines:
               logs:
                 receivers: [filelog]
-                processors: [k8sattributes, memory_limiter, batch]
+                processors: [memory_limiter, k8sattributes, batch]   # memory_limiter first: it must refuse data before others buffer it
                 exporters: [otlphttp/loki]
               traces:
                 receivers: [otlp]
-                processors: [k8sattributes, memory_limiter, batch]
+                processors: [memory_limiter, k8sattributes, filter/drop-health, batch]
                 exporters: [otlp/tempo]
   destination:
     server: https://kubernetes.default.svc
@@ -305,9 +320,11 @@ spec:
     retry: { limit: 10, backoff: { duration: 15s, factor: 2, maxDuration: 5m } }
 ```
 
-### The Slack webhook for Alertmanager
+### The Slack token for Alertmanager
 
-Reuse `dkm/slack-webhook` from Phase 7. Add
+Alertmanager uses the same `chat:write`-only **bot token** as Argo CD (Phase 7), sent in an `Authorization`
+header to Slack's `chat.postMessage` API (see the `slack_configs` above). Not an incoming webhook: a webhook's
+URL is its credential, and URLs end up in logs.
 `gitops/platform-config/external-secrets/alertmanager-slack.yaml`:
 
 ```yaml
@@ -321,10 +338,23 @@ spec:
   secretStoreRef: { kind: ClusterSecretStore, name: aws-secrets-manager }
   target: { name: alertmanager-slack }
   data:
-    - secretKey: url
-      remoteRef: { key: dkm/slack-webhook, property: url }
+    # The same chat:write-only bot token Argo CD uses (Phase 7)
+    - secretKey: token
+      remoteRef: { key: dkm/slack-bot1, property: token }
 ```
 
+Its namespace (`observability`) only exists once kube-prometheus-stack has synced; External Secrets retries
+until then, so a brief `secret "alertmanager-slack" not found` on the Alertmanager pod is expected.
+
+### If DaemonSet pods stay `Pending` with "Too many pods"
+
+Without extra configuration, the VPC CNI gives each pod its own VPC IP from the node's network interfaces, which
+caps a `t3.medium` at **17 pods**. The system nodes ran out once this phase added a collector and a node-exporter
+per node, and a DaemonSet pod can only run on its own node. The fix is **prefix delegation** (a /28 per interface
+slot) with the kubelet's `maxPods` raised to 110: already in Phase 3's `eks.tf` (`vpc-cni` add-on
+`configuration_values`, `cloudinit_pre_nodeadm`) and Phase 4's `nodes.yaml` (`kubelet.maxPods`). On an existing
+cluster, applying it rolls the system node group one node at a time; the first run measured 1,093 of 1,093 app
+requests succeeding during the roll.
 ---
 
 ## 8.5 Instrument dkmwebapp
@@ -342,12 +372,22 @@ curl -sL "https://github.com/open-telemetry/opentelemetry-java-instrumentation/r
 In `app/Dockerfile`, in the **runtime** stage, after the `COPY --from=build` line:
 
 ```dockerfile
-# OpenTelemetry Java agent: traces every HTTP request and JDBC query with no code changes.
-# --checksum makes the build fail if the downloaded file isn't exactly this release.
-ADD --checksum=sha256:‹checksum› \
+# OpenTelemetry Java agent ‹version›: traces every HTTP request and JDBC query with no code changes.
+# --checksum makes the build fail if the downloaded file isn't exactly this release (checked against the digest
+# GitHub publishes for the asset). --chmod=644: ADD from a URL creates the file as root-only (600), and the
+# container runs as 65532. The agent only loads when JAVA_TOOL_OPTIONS says so, so local runs are unaffected.
+ADD --chmod=644 --checksum=sha256:‹checksum› \
     https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/‹version›/opentelemetry-javaagent.jar \
     /app/otel.jar
 ```
+
+Compare your checksum with the one GitHub publishes for the asset:
+`gh api repos/open-telemetry/opentelemetry-java-instrumentation/releases/tags/$V --jq '.assets[] | select(.name=="opentelemetry-javaagent.jar") | .digest'`.
+
+⚠️ **`--chmod=644` is required.** `ADD` from a URL creates the file readable by root only (mode 600), and the
+container runs as 65532: the JVM would fail with `Error opening zip file … /app/otel.jar`. Test the image as its
+real user before pushing:
+`MSYS_NO_PATHCONV=1 docker run --rm --entrypoint java dkmwebapp:scan -javaagent:/app/otel.jar -version`.
 
 The agent is only loaded when `JAVA_TOOL_OPTIONS` says so, so local `docker compose` runs are unaffected.
 
@@ -361,6 +401,7 @@ In `templates/_pod.tpl`, add to the container's `env:` list:
         - { name: JAVA_TOOL_OPTIONS, value: "-javaagent:/app/otel.jar" }
         - { name: OTEL_SERVICE_NAME, value: dkmwebapp }
         - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://$(NODE_IP):4318" }   # this node's collector
+        - { name: OTEL_EXPORTER_OTLP_PROTOCOL, value: http/protobuf }
         - { name: OTEL_TRACES_EXPORTER, value: otlp }
         - { name: OTEL_METRICS_EXPORTER, value: none }   # metrics come from Micrometer → Prometheus
         - { name: OTEL_LOGS_EXPORTER, value: none }      # logs come from the collector reading pod logs
@@ -428,14 +469,28 @@ metrics:
   serviceMonitor: true
 ```
 
-### Ship it
+### Ship it, in three pushes
+
+Order matters. Argo CD applies chart changes within a minute, while a new image takes CI about 5 minutes: push
+the `JAVA_TOOL_OPTIONS` line together with the Dockerfile change and new pods would start on the **old** image,
+which has no `/app/otel.jar`, and fail. Ship the capability first, then switch it on:
 
 ```bash
-git add app gitops
-git commit -m "Add observability stack and instrument dkmwebapp"
-git push        # CI builds the image with the agent, then Argo CD rolls it out
-gh run watch
+# 1. The stack (the ServiceMonitor and PrometheusRule types must exist before the app uses them)
+git add gitops/platform gitops/platform-config && git commit -m "Add observability stack" && git push
+kubectl -n argocd get applications      # wait: all Synced / Healthy
+
+# 2. The image with the agent (inactive: nothing sets JAVA_TOOL_OPTIONS yet)
+git add app/Dockerfile && git commit -m "Add the OpenTelemetry Java agent to the image" && git push
+gh run watch                            # then wait for /api/version to show the new commit
+
+# 3. Switch it on: env vars, ServiceMonitor, alert rules
+git pull                                # the bot's digest commit
+git add gitops && git commit -m "Enable tracing, scraping and alert rules" && git push
 ```
+
+Expect start-up to grow (the first run: 7.6 s → 17.5 s) while the agent instruments classes; the startup probe
+allows 150 s.
 
 ---
 
@@ -457,6 +512,17 @@ controller:
 ```
 
 …and run the `helm upgrade argocd …` command from Phase 7 again.
+
+⚠️ **This panel won't fill in this project.** `argocd_app_sync_total` resets whenever Argo CD restarts (every
+Helm upgrade, and every session's new cluster), and Prometheus keeps 2 days, so a 7-day `increase()` has nothing
+to work with. Deployment frequency needs a durable source. Here, Git already is one: every deploy is a bot commit.
+
+```bash
+git log --since=7.days --oneline --grep '^Deploy dkmwebapp' | wc -l      # deployments in the last 7 days
+```
+
+In production you'd keep metrics in long-term storage (Thanos, Mimir) or record deployments as GitHub
+deployment events.
 
 ---
 
@@ -483,9 +549,13 @@ for i in $(seq 1 200); do curl -s -o /dev/null https://app.danielkojomegbenu.com
 |---|---|
 | **Explore → Prometheus** | `sum(rate(http_server_requests_seconds_count{application="dkmwebapp"}[1m]))` shows a line |
 | **Explore → Loki** | `{k8s_namespace_name="dkm"}` shows dkmwebapp's log lines |
-| **Explore → Tempo → Search** | traces for `dkmwebapp`, each with an HTTP span and a child JDBC span to MySQL |
+| **Explore → Tempo → Search** | traces for `dkmwebapp`: `GET /api/products` → `ProductRepository.findAll` → `SELECT dkm.products`. No `/actuator/health` traces: the collector's `filter/drop-health` drops them (they were 19 of 50 before) |
 | **Dashboards → Community** | JVM dashboard with heap and GC for the dkmwebapp pods |
 | **Alerting → Alert rules** | `DkmwebappHighErrorRate`, `DkmwebappSlow`, `DkmwebappPodRestarting`, all Normal |
+
+To query a backend from your PC, use `kubectl port-forward`, not `kubectl get --raw …/services/…/proxy`: the API
+proxy needs the control plane to reach the pod's port, and the node security group (correctly) allows it only the
+kubelet and webhook ports.
 
 **Prove alerting reaches Slack:**
 
@@ -493,7 +563,8 @@ for i in $(seq 1 200); do curl -s -o /dev/null https://app.danielkojomegbenu.com
 kubectl -n observability port-forward svc/kube-prometheus-stack-alertmanager 9093 &
 curl -s -XPOST localhost:9093/api/v2/alerts -H 'Content-Type: application/json' \
   -d '[{"labels":{"alertname":"GuideTestAlert"},"annotations":{"summary":"Test alert from the build guide"}}]'
-# #deployments gets "🔥 GuideTestAlert" within about 30 seconds
+# #deployments gets "🔥 GuideTestAlert" within about 30 seconds. Alertmanager only logs failures, so prove it:
+curl -s localhost:9093/metrics | grep -E 'alertmanager_notifications(_failed)?_total\{.*slack'   # sent > 0, every failed = 0
 kill %1
 ```
 
