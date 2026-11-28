@@ -86,14 +86,16 @@ resource "aws_secretsmanager_secret_version" "cargolens" {
   count     = local.cargolens ? 1 : 0
   secret_id = aws_secretsmanager_secret.cargolens[0].id
   secret_string = jsonencode({
-    host           = aws_db_instance.cargolens[0].address
-    port           = tostring(aws_db_instance.cargolens[0].port)
-    dbname         = aws_db_instance.cargolens[0].db_name
-    username       = aws_db_instance.cargolens[0].username
-    password       = random_password.cargolens_db[0].result
-    app_secret     = random_password.cargolens_app_secret[0].result
-    bundle_uri     = var.cargolens_bundle_uri
-    demo_passwords = jsonencode({ for u in local.cargolens_users : u => random_password.cargolens_demo[u].result })
+    host       = aws_db_instance.cargolens[0].address
+    port       = tostring(aws_db_instance.cargolens[0].port)
+    dbname     = aws_db_instance.cargolens[0].db_name
+    username   = aws_db_instance.cargolens[0].username
+    password   = random_password.cargolens_db[0].result
+    app_secret = random_password.cargolens_app_secret[0].result
+    bundle_uri = var.cargolens_bundle_uri
+    # The loader passes this as S3's ExpectedBucketOwner: a same-named bucket in another account is refused
+    bundle_bucket_owner = data.aws_caller_identity.current.account_id
+    demo_passwords      = jsonencode({ for u in local.cargolens_users : u => random_password.cargolens_demo[u].result })
   })
 }
 
