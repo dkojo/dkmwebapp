@@ -1,0 +1,63 @@
+# The cargolens namespace gets the same two image rules as dkm: an allow-list (only CargoLens images from
+# GHCR, pinned by digest) and a signature check (only digests signed by CargoLens's own CI on main).
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-images-cargolens
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchLabels: { kubernetes.io/metadata.name: cargolens }
+  variables:
+    - name: allowed
+      expression: >-
+        r'^ghcr\.io/dkojo/cargolens@sha256:[a-f0-9]{64}$'
+  validations:
+    - expression: >-
+        object.spec.containers.all(c, c.image.matches(variables.allowed)) &&
+        (!has(object.spec.initContainers) || object.spec.initContainers.all(c, c.image.matches(variables.allowed)))
+      message: "The cargolens namespace only runs CargoLens images from GHCR, pinned by digest (ghcr.io/dkojo/cargolens@sha256:…)."
+---
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: verify-cargolens-signature
+spec:
+  validationActions: [Deny]
+  failurePolicy: Fail                       # if Kyverno can't verify, the pod doesn't start
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchLabels: { kubernetes.io/metadata.name: cargolens }
+  matchImageReferences:
+    - glob: "ghcr.io/dkojo/cargolens*"
+  # No credentials: the package is public, so the signatures are read anonymously
+  validationConfigurations:
+    mutateDigest: true
+    verifyDigest: true
+    required: true
+  attestors:
+    - name: ci
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subject: https://github.com/dkojo/cargolens/.github/workflows/ci.yml@refs/heads/main
+        ctlog:
+          url: https://rekor.sigstore.dev     # the signature must be in the public transparency log
+  validations:
+    - expression: >-
+        images.containers.map(image, verifyImageSignatures(image, [attestors.ci])).all(e, e > 0) &&
+        (!('initContainers' in images) ||
+          images.initContainers.map(image, verifyImageSignatures(image, [attestors.ci])).all(e, e > 0))
+      message: "CargoLens images must be signed (Cosign keyless) by ci.yml on main of dkojo/cargolens"

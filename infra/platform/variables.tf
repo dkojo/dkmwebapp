@@ -111,3 +111,24 @@ variable "waf_rate_limit" {
   type        = number
   default     = 600
 }
+
+variable "cargolens_bundle_uri" {
+  description = "s3:// URI of the CargoLens data bundle archive (cargolens infra/publish-bundle.sh). Empty: CargoLens is not deployed. Set it in the git-ignored envs/<env>.local.tfvars."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.cargolens_bundle_uri == "" || can(regex("^s3://[a-z0-9.-]+/bundles/[^/]+[.]tar[.]gz$", var.cargolens_bundle_uri))
+    error_message = "Expected s3://<bucket>/bundles/<name>.tar.gz"
+  }
+}
+
+variable "cargolens_allowed_cidrs" {
+  description = "Networks allowed to reach CargoLens besides admin_cidrs (local tfvars)."
+  type        = list(string)
+  default     = []
+}
+
+variable "cargolens_db_engine_version" {
+  type    = string
+  default = "17"
+}
