@@ -11,7 +11,8 @@ spec:
         operations: [CREATE, UPDATE]
         resources: [pods]
     namespaceSelector:
-      matchLabels: { kubernetes.io/metadata.name: dkm }
+      matchExpressions:
+        - { key: kubernetes.io/metadata.name, operator: In, values: [dkm, cargolens] }
   validations:
     - expression: >-
         object.spec.containers.all(c,

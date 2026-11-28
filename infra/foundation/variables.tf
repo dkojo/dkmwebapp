@@ -53,3 +53,9 @@ variable "ecr_untagged_expiry_days" {
   type        = number
   default     = 14
 }
+
+variable "hosted_app_hostnames" {
+  description = "Hostnames of other apps hosted on the platform that need a certificate (e.g. CargoLens)"
+  type        = list(string)
+  default     = []
+}

@@ -7,3 +7,4 @@ github_oidc_subject_prefix = "repo:dkojo@167027053/dkmwebapp@893369381" # immuta
 ci_branches                = ["remodelled"]
 domain_name                = "danielkojomegbenu.com"
 app_hostname               = "app.danielkojomegbenu.com"
+hosted_app_hostnames       = ["cargolens.danielkojomegbenu.com"] # CargoLens (infra/platform/cargolens.tf)

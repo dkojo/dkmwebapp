@@ -1,0 +1,33 @@
+# CargoLens, a second tenant: the chart and its production values live in the CargoLens repository, whose CI
+# writes each newly signed image digest into values-prod.yaml. Kyverno (platform-config/kyverno-policies)
+# admits the pods only if that digest carries CargoLens's CI signature.
+# The AWS side (PostgreSQL, secret, Pod Identity, WAF) is infra/platform/cargolens.tf.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cargolens
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/dkojo/cargolens.git
+      targetRevision: main
+      path: deploy/helm/cargolens
+      helm:
+        valueFiles: [$values/deploy/helm/values-prod.yaml]
+    - repoURL: https://github.com/dkojo/cargolens.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cargolens
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]
+    managedNamespaceMetadata:
+      labels:
+        elbv2.k8s.aws/pod-readiness-gate-inject: enabled   # a pod is Ready only once the ALB reports it healthy
+        pod-security.kubernetes.io/enforce: restricted     # no root, privileged or host-access pods
+        pod-security.kubernetes.io/warn: restricted
+    retry: { limit: 5, backoff: { duration: 15s, factor: 2, maxDuration: 3m } }
